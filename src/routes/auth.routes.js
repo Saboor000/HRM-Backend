@@ -8,8 +8,8 @@ import {
 	updateUserByAdmin,
 	deleteUserByAdmin,
 } from "../controllers/auth.controller.js";
-import { protect, authorize } from "../middleware/authMiddleware.js";
-import { validateBody, validateParams } from "../middleware/validateRequest.js";
+import { protect, authorize } from "../middleware/auth.middleware.js";
+import { validateBody, validateParams } from "../middleware/validateRequest.middleware.js";
 import {
 	signinSchema,
 	adminCreateUserSchema,

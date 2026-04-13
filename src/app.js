@@ -3,7 +3,7 @@ import express from "express";
 import cors from "cors";
 
 import authRouter from "./routes/auth.routes.js";
-import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
+import { notFound, errorHandler } from "./middleware/error.middleware.js";
 import { supabase } from "./config/supabase.js";
 import employeeRouter from "./routes/employee.routes.js";
 

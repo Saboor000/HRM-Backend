@@ -8,10 +8,10 @@ import {
   deleteEmployee,
 } from "../controllers/employee.controller.js";
 
-import { protect } from "../middleware/authMiddleware.js";
-import { authorize } from "../middleware/authMiddleware.js";
-import { upload } from "../middleware/uploadMiddleware.js";
-import { validateBody, validateParams, validateQuery } from "../middleware/validateRequest.js";
+import { protect } from "../middleware/auth.middleware.js";
+import { authorize } from "../middleware/auth.middleware.js";
+import { upload } from "../middleware/upload.middleware.js";
+import { validateBody, validateParams, validateQuery } from "../middleware/validateRequest.middleware.js";
 import {
   createEmployeeSchema,
   updateEmployeeSchema,
