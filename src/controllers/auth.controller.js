@@ -1,12 +1,22 @@
 import jwt from "jsonwebtoken";
 import { supabase, supabaseAuth } from "../config/supabase.js";
 
+const getRole = (user) => user?.app_metadata?.role || user?.user_metadata?.role || "employee";
+const getName = (user) => user?.user_metadata?.name || null;
+
+const mapAuthUser = (user) => ({
+  id: user.id,
+  email: user.email,
+  role: getRole(user),
+  name: getName(user),
+});
+
 const createToken = (user) => {
   return jwt.sign(
     {
       id: user.id,
       email: user.email,
-      role: user.user_metadata?.role || user.role || "employee",
+      role: getRole(user),
     },
     process.env.JWT_SECRET,
     { expiresIn: "7d" }
@@ -17,25 +27,28 @@ const normalizeName = (name) => {
   return typeof name === "string" && name.trim() ? name.trim() : null;
 };
 
-const createProfileRecord = async ({ id, email, name, role }) => {
-  const { data, error } = await supabase
-    .from("users")
-    .insert([
-      {
-        id,
-        email,
-        name,
-        role,
-      },
-    ])
-    .select("id, email, role, name")
-    .single();
+const listAllAuthUsers = async () => {
+  const users = [];
+  let page = 1;
+  const perPage = 500;
 
-  if (error) {
-    return { error };
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+
+    if (error) {
+      return { error };
+    }
+
+    users.push(...(data?.users || []));
+
+    if (!data?.nextPage) {
+      break;
+    }
+
+    page = data.nextPage;
   }
 
-  return { data };
+  return { users };
 };
 
 const createAuthUser = async ({ email, password, name, role = "employee" }) => {
@@ -54,6 +67,9 @@ const createAuthUser = async ({ email, password, name, role = "employee" }) => {
     email,
     password,
     email_confirm: true,
+    app_metadata: {
+      role,
+    },
     user_metadata: {
       name: normalizedName,
       role,
@@ -69,20 +85,8 @@ const createAuthUser = async ({ email, password, name, role = "employee" }) => {
     };
   }
 
-  const { data: profileData, error: profileError } = await createProfileRecord({
-    id: authData.user.id,
-    email,
-    name: normalizedName,
-    role,
-  });
-
-  if (profileError) {
-    await supabase.auth.admin.deleteUser(authData.user.id);
-    return { error: { status: 400, message: profileError.message } };
-  }
-
   return {
-    user: profileData,
+    user: mapAuthUser(authData.user),
   };
 };
 
@@ -103,31 +107,12 @@ export const signin = async (req, res, next) => {
       return res.status(401).json({ message: error?.message || "Invalid credentials" });
     }
 
-    const { data: profile } = await supabase
-      .from("users")
-      .select("id, email, role, name")
-      .eq("id", data.user.id)
-      .maybeSingle();
-
-    const token = createToken({
-      id: data.user.id,
-      email: data.user.email,
-      role: profile?.role || data.user.user_metadata?.role || "employee",
-      user_metadata: {
-        role: profile?.role || data.user.user_metadata?.role || "employee",
-        name: profile?.name || data.user.user_metadata?.name || null,
-      },
-    });
+    const token = createToken(data.user);
 
     return res.status(200).json({
       message: "Login successful",
       token,
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        role: profile?.role || data.user.user_metadata?.role || "employee",
-        name: profile?.name || data.user.user_metadata?.name || null,
-      },
+      user: mapAuthUser(data.user),
     });
   } catch (error) {
     return next(error);
@@ -138,17 +123,13 @@ export const getUserDetails = async (req, res, next) => {
   try {
     const { id } = req.user;
 
-    const { data: user, error: userError } = await supabase
-      .from("users")
-      .select("id, email, role, name")
-      .eq("id", id)
-      .maybeSingle();
+    const { data: authUserData, error: authUserError } = await supabase.auth.admin.getUserById(id);
 
-    if (userError) {
-      return res.status(400).json({ message: userError.message });
+    if (authUserError) {
+      return res.status(400).json({ message: authUserError.message });
     }
 
-    if (!user) {
+    if (!authUserData?.user) {
       return res.status(404).json({ message: "User profile not found" });
     }
 
@@ -163,7 +144,7 @@ export const getUserDetails = async (req, res, next) => {
     }
 
     return res.status(200).json({
-      user,
+      user: mapAuthUser(authUserData.user),
       employee: employee || null,
     });
   } catch (error) {
@@ -192,18 +173,17 @@ export const createUserByAdmin = async (req, res, next) => {
 
 export const getUsersByAdmin = async (req, res, next) => {
   try {
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, email, role, name")
-      .order("email", { ascending: true });
+    const { users, error } = await listAllAuthUsers();
 
     if (error) {
       return res.status(400).json({ message: error.message });
     }
 
+    const mappedUsers = users.map(mapAuthUser).sort((a, b) => a.email.localeCompare(b.email));
+
     return res.status(200).json({
       message: "Users fetched successfully",
-      users: data || [],
+      users: mappedUsers,
     });
   } catch (error) {
     return next(error);
@@ -214,23 +194,19 @@ export const getUserByIdByAdmin = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, email, role, name")
-      .eq("id", id)
-      .maybeSingle();
+    const { data, error } = await supabase.auth.admin.getUserById(id);
 
     if (error) {
       return res.status(400).json({ message: error.message });
     }
 
-    if (!data) {
+    if (!data?.user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     return res.status(200).json({
       message: "User fetched successfully",
-      user: data,
+      user: mapAuthUser(data.user),
     });
   } catch (error) {
     return next(error);
@@ -242,15 +218,13 @@ export const updateUserByAdmin = async (req, res, next) => {
     const { id } = req.params;
     const { email, password, name, role } = req.body;
 
-    const { data: targetUser, error: targetUserError } = await supabase
-      .from("users")
-      .select("id, email, role, name")
-      .eq("id", id)
-      .maybeSingle();
+    const { data: targetAuthData, error: targetUserError } = await supabase.auth.admin.getUserById(id);
 
     if (targetUserError) {
       return res.status(400).json({ message: targetUserError.message });
     }
+
+    const targetUser = targetAuthData?.user ? mapAuthUser(targetAuthData.user) : null;
 
     if (!targetUser) {
       return res.status(404).json({ message: "User not found" });
@@ -265,11 +239,9 @@ export const updateUserByAdmin = async (req, res, next) => {
     }
 
     const authUpdates = {};
-    const profileUpdates = {};
 
     if (typeof email === "string" && email.trim()) {
       authUpdates.email = email.trim();
-      profileUpdates.email = email.trim();
     }
 
     if (typeof password === "string" && password.trim()) {
@@ -280,18 +252,15 @@ export const updateUserByAdmin = async (req, res, next) => {
     const nextRole = typeof role === "string" && role.trim() ? role.trim() : targetUser.role;
 
     if (nextName !== targetUser.name || nextRole !== targetUser.role) {
+      authUpdates.app_metadata = {
+        ...(targetAuthData.user.app_metadata || {}),
+        role: nextRole,
+      };
       authUpdates.user_metadata = {
+        ...(targetAuthData.user.user_metadata || {}),
         name: nextName,
         role: nextRole,
       };
-    }
-
-    if (nextName !== targetUser.name) {
-      profileUpdates.name = nextName;
-    }
-
-    if (nextRole !== targetUser.role) {
-      profileUpdates.role = nextRole;
     }
 
     if (Object.keys(authUpdates).length > 0) {
@@ -301,20 +270,15 @@ export const updateUserByAdmin = async (req, res, next) => {
       }
     }
 
-    const { data, error } = await supabase
-      .from("users")
-      .update(profileUpdates)
-      .eq("id", id)
-      .select("id, email, role, name")
-      .maybeSingle();
+    const { data: refreshedUserData, error: refreshedUserError } = await supabase.auth.admin.getUserById(id);
 
-    if (error) {
-      return res.status(400).json({ message: error.message });
+    if (refreshedUserError) {
+      return res.status(400).json({ message: refreshedUserError.message });
     }
 
     return res.status(200).json({
       message: "User updated successfully",
-      user: data,
+      user: mapAuthUser(refreshedUserData.user),
     });
   } catch (error) {
     return next(error);
@@ -329,15 +293,13 @@ export const deleteUserByAdmin = async (req, res, next) => {
       return res.status(400).json({ message: "Admin cannot delete their own account" });
     }
 
-    const { data: targetUser, error: targetUserError } = await supabase
-      .from("users")
-      .select("id, role")
-      .eq("id", id)
-      .maybeSingle();
+    const { data: targetAuthData, error: targetUserError } = await supabase.auth.admin.getUserById(id);
 
     if (targetUserError) {
       return res.status(400).json({ message: targetUserError.message });
     }
+
+    const targetUser = targetAuthData?.user ? mapAuthUser(targetAuthData.user) : null;
 
     if (!targetUser) {
       return res.status(404).json({ message: "User not found" });
@@ -350,21 +312,6 @@ export const deleteUserByAdmin = async (req, res, next) => {
     const { error: authDeleteError } = await supabase.auth.admin.deleteUser(id);
     if (authDeleteError) {
       return res.status(400).json({ message: authDeleteError.message });
-    }
-
-    const { data, error } = await supabase
-      .from("users")
-      .delete()
-      .eq("id", id)
-      .select("id")
-      .maybeSingle();
-
-    if (error) {
-      return res.status(400).json({ message: error.message });
-    }
-
-    if (!data) {
-      return res.status(404).json({ message: "User not found" });
     }
 
     return res.status(200).json({ message: "User deleted successfully" });

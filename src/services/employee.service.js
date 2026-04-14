@@ -57,20 +57,6 @@ export const createEmployeeService = async ({ body, user, files }) => {
 		};
 	}
 
-	const { data: existingUser, error: existingUserError } = await supabase
-		.from("users")
-		.select("id")
-		.eq("email", email)
-		.maybeSingle();
-
-	if (existingUserError) {
-		return { error: { status: 400, message: existingUserError.message } };
-	}
-
-	if (existingUser) {
-		return { error: { status: 409, message: "User already exists" } };
-	}
-
 	const { data: existingEmployee, error: existingEmployeeError } = await supabase
 		.from("employees")
 		.select("id")
@@ -96,6 +82,9 @@ export const createEmployeeService = async ({ body, user, files }) => {
 		email,
 		password,
 		email_confirm: true,
+		app_metadata: {
+			role: targetRole,
+		},
 		user_metadata: {
 			role: targetRole,
 			name: `${firstName} ${lastName}`.trim(),
@@ -103,25 +92,13 @@ export const createEmployeeService = async ({ body, user, files }) => {
 	});
 
 	if (authError || !authUser?.user?.id) {
-		return { error: { status: 400, message: authError?.message || "Unable to create auth user" } };
-	}
-
-	const { data: userRow, error: userInsertError } = await supabase
-		.from("users")
-		.insert([
-			{
-				id: authUser.user.id,
-				email,
-				name: `${firstName} ${lastName}`.trim(),
-				role: targetRole,
+		const isDuplicateEmail = /already been registered|already registered|duplicate/i.test(authError?.message || "");
+		return {
+			error: {
+				status: isDuplicateEmail ? 409 : 400,
+				message: authError?.message || "Unable to create auth user",
 			},
-		])
-		.select("id, email, role, name")
-		.single();
-
-	if (userInsertError) {
-		await supabase.auth.admin.deleteUser(authUser.user.id);
-		return { error: { status: 400, message: userInsertError.message } };
+		};
 	}
 
 	const { data, error } = await supabase
@@ -154,14 +131,18 @@ export const createEmployeeService = async ({ body, user, files }) => {
 		.single();
 
 	if (error) {
-		await supabase.from("users").delete().eq("id", userRow.id);
 		await supabase.auth.admin.deleteUser(authUser.user.id);
 		return { error: { status: 400, message: error.message } };
 	}
 
 	return {
 		employee: data,
-		user: userRow,
+		user: {
+			id: authUser.user.id,
+			email: authUser.user.email,
+			role: authUser.user.app_metadata?.role || authUser.user.user_metadata?.role || targetRole,
+			name: authUser.user.user_metadata?.name || `${firstName} ${lastName}`.trim(),
+		},
 	};
 };
 
@@ -305,7 +286,6 @@ export const deleteEmployeeService = async ({ id }) => {
 	}
 
 	if (employee.auth_id) {
-		await supabase.from("users").delete().eq("id", employee.auth_id);
 		await supabase.auth.admin.deleteUser(employee.auth_id);
 	}
 

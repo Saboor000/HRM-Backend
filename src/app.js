@@ -6,6 +6,7 @@ import authRouter from "./routes/auth.routes.js";
 import { notFound, errorHandler } from "./middleware/error.middleware.js";
 import { supabase } from "./config/supabase.js";
 import employeeRouter from "./routes/employee.routes.js";
+import leaveRouter from "./routes/leave.routes.js";
 
 dotenv.config();
 
@@ -24,13 +25,14 @@ app.get("/", (req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api", employeeRouter);
+app.use("/api", leaveRouter);
 
 app.use(notFound);
 app.use(errorHandler);
 
 const startServer = async () => {
 	try {
-		const { error } = await supabase.from("users").select("id").limit(1);
+		const { error } = await supabase.from("employees").select("id").limit(1);
 
 		if (error) {
 			console.warn(`Supabase connection check warning: ${error.message}`);
