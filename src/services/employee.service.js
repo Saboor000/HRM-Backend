@@ -1,7 +1,13 @@
 import { supabase } from "../config/supabase.js";
 import { uploadFile } from "../utils/uploadToSupabase.js";
 
-const allowedRoles = ["employee", "hr", "manager"];
+const allowedDesignations = ["admin", "employee", "hr", "manager"];
+const serviceError = (status, message) => ({ error: { status, message } });
+const employeeNotFound = () => serviceError(404, "Employee not found");
+const isEmployeeRole = (user) => user?.designation === "employee";
+const isRestrictedCreator = (user) => user?.designation === "hr" || user?.designation === "manager";
+const fullName = (firstName, lastName) => `${firstName} ${lastName}`.trim();
+const ensureRequired = (values) => values.every(Boolean);
 
 const uploadSingle = async (files, key, folder) => {
 	if (!files?.[key]?.[0]) return null;
@@ -19,11 +25,26 @@ const uploadMultiple = async (files, key, folder) => {
 	return urls;
 };
 
+const getUploads = async (files) => ({
+	cnic_url: await uploadSingle(files, "cnic", "cnic"),
+	degree_url: await uploadSingle(files, "degree", "degree"),
+	passport_url: await uploadSingle(files, "passport", "passport"),
+	profile_pic_url: await uploadSingle(files, "profilePic", "profile"),
+	contract_url: await uploadSingle(files, "contract", "contract"),
+	other_docs: await uploadMultiple(files, "otherDocs", "other"),
+});
+
+const employeeById = async (id, select = "*") =>
+	supabase.from("employees").select(select).eq("id", id).maybeSingle();
+
+const employeeByEmployeeId = async (employeeId) =>
+	supabase.from("employees").select("id").eq("employee_id", employeeId).maybeSingle();
+
 export const createEmployeeService = async ({ body, user, files }) => {
 	const {
 		email,
 		password,
-		role,
+		designation,
 		firstName,
 		lastName,
 		dob,
@@ -38,66 +59,47 @@ export const createEmployeeService = async ({ body, user, files }) => {
 		emergencyPhone,
 	} = body;
 
-	const targetRole = role || "employee";
+	const targetDesignation = designation || "employee";
 
-	if (!allowedRoles.includes(targetRole)) {
-		return { error: { status: 400, message: "Role must be one of: employee, hr, manager" } };
+	if (!allowedDesignations.includes(targetDesignation)) {
+		return serviceError(400, "Designation must be one of: admin, employee, hr, manager");
 	}
 
-	if (user?.role === "hr" && targetRole !== "employee") {
-		return { error: { status: 403, message: "HR can only create employee accounts" } };
+	// Authorization: Admin can create any designation
+	// HR and Manager can only create employees
+	if (isRestrictedCreator(user) && targetDesignation !== "employee") {
+		return serviceError(403, "HR and Manager can only create employee accounts");
 	}
 
-	if (!email || !password || !firstName || !lastName || !employeeId) {
-		return {
-			error: {
-				status: 400,
-				message: "email, password, firstName, lastName and employeeId are required",
-			},
-		};
+	if (!ensureRequired([email, password, firstName, lastName, employeeId])) {
+		return serviceError(400, "email, password, firstName, lastName and employeeId are required");
 	}
 
-	const { data: existingEmployee, error: existingEmployeeError } = await supabase
-		.from("employees")
-		.select("id")
-		.eq("employee_id", employeeId)
-		.maybeSingle();
+	const { data: existingEmployee, error: existingEmployeeError } = await employeeByEmployeeId(employeeId);
 
 	if (existingEmployeeError) {
-		return { error: { status: 400, message: existingEmployeeError.message } };
+		return serviceError(400, existingEmployeeError.message);
 	}
 
 	if (existingEmployee) {
-		return { error: { status: 409, message: "Employee ID already exists" } };
+		return serviceError(409, "Employee ID already exists");
 	}
 
-	const cnic_url = await uploadSingle(files, "cnic", "cnic");
-	const degree_url = await uploadSingle(files, "degree", "degree");
-	const passport_url = await uploadSingle(files, "passport", "passport");
-	const profile_pic_url = await uploadSingle(files, "profilePic", "profile");
-	const contract_url = await uploadSingle(files, "contract", "contract");
-	const other_docs = await uploadMultiple(files, "otherDocs", "other");
+	const uploads = await getUploads(files);
 
 	const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
 		email,
 		password,
 		email_confirm: true,
-		app_metadata: {
-			role: targetRole,
-		},
 		user_metadata: {
-			role: targetRole,
-			name: `${firstName} ${lastName}`.trim(),
+			name: fullName(firstName, lastName),
 		},
 	});
 
 	if (authError || !authUser?.user?.id) {
 		const isDuplicateEmail = /already been registered|already registered|duplicate/i.test(authError?.message || "");
 		return {
-			error: {
-				status: isDuplicateEmail ? 409 : 400,
-				message: authError?.message || "Unable to create auth user",
-			},
+			error: { status: isDuplicateEmail ? 409 : 400, message: authError?.message || "Unable to create auth user" },
 		};
 	}
 
@@ -114,17 +116,12 @@ export const createEmployeeService = async ({ body, user, files }) => {
 				address,
 				employee_id: employeeId,
 				department,
-				role: targetRole,
+				designation: targetDesignation,
 				joining_date: joiningDate,
 				employment_type: employmentType,
 				emergency_name: emergencyName,
 				emergency_phone: emergencyPhone,
-				cnic_url,
-				degree_url,
-				passport_url,
-				profile_pic_url,
-				contract_url,
-				other_docs,
+				...uploads,
 			},
 		])
 		.select()
@@ -132,7 +129,7 @@ export const createEmployeeService = async ({ body, user, files }) => {
 
 	if (error) {
 		await supabase.auth.admin.deleteUser(authUser.user.id);
-		return { error: { status: 400, message: error.message } };
+		return serviceError(400, error.message);
 	}
 
 	return {
@@ -140,8 +137,7 @@ export const createEmployeeService = async ({ body, user, files }) => {
 		user: {
 			id: authUser.user.id,
 			email: authUser.user.email,
-			role: authUser.user.app_metadata?.role || authUser.user.user_metadata?.role || targetRole,
-			name: authUser.user.user_metadata?.name || `${firstName} ${lastName}`.trim(),
+			name: authUser.user.user_metadata?.name || fullName(firstName, lastName),
 		},
 	};
 };
@@ -164,7 +160,7 @@ export const getAllEmployeesService = async (queryParams = {}) => {
 
 	let query = supabase.from("employees").select("*", { count: "exact" });
 
-	if (role) query = query.eq("role", role);
+	if (role) query = query.eq("designation", role);
 	if (department) query = query.ilike("department", `%${department}%`);
 	if (employmentType) query = query.eq("employment_type", employmentType);
 	if (gender) query = query.eq("gender", gender);
@@ -180,7 +176,7 @@ export const getAllEmployeesService = async (queryParams = {}) => {
 	const { data, error, count } = await query;
 
 	if (error) {
-		return { error: { status: 400, message: error.message } };
+		return serviceError(400, error.message);
 	}
 
 	return {
@@ -204,22 +200,16 @@ export const getAllEmployeesService = async (queryParams = {}) => {
 };
 
 export const getEmployeeByIdService = async ({ id, user }) => {
-	const { data, error } = await supabase
-		.from("employees")
-		.select("*")
-		.eq("id", id)
-		.maybeSingle();
+	const { data, error } = await employeeById(id);
 
 	if (error) {
-		return { error: { status: 400, message: error.message } };
+		return serviceError(400, error.message);
 	}
 
-	if (!data) {
-		return { error: { status: 404, message: "Employee not found" } };
-	}
+	if (!data) return employeeNotFound();
 
-	if (user?.role === "employee" && user?.id !== data.auth_id) {
-		return { error: { status: 403, message: "Forbidden" } };
+	if (isEmployeeRole(user) && user?.auth_id !== data.auth_id) {
+		return serviceError(403, "Forbidden");
 	}
 
 	return { employee: data };
@@ -236,14 +226,23 @@ export const updateEmployeeService = async ({ id, body }) => {
 		...rest
 	} = body;
 
+	const fieldMap = {
+		firstName: "first_name",
+		lastName: "last_name",
+		joiningDate: "joining_date",
+		employmentType: "employment_type",
+		emergencyName: "emergency_name",
+		emergencyPhone: "emergency_phone",
+	};
+
 	const updates = {
 		...rest,
-		...(firstName ? { first_name: firstName } : {}),
-		...(lastName ? { last_name: lastName } : {}),
-		...(joiningDate ? { joining_date: joiningDate } : {}),
-		...(employmentType ? { employment_type: employmentType } : {}),
-		...(emergencyName ? { emergency_name: emergencyName } : {}),
-		...(emergencyPhone ? { emergency_phone: emergencyPhone } : {}),
+		...(firstName ? { [fieldMap.firstName]: firstName } : {}),
+		...(lastName ? { [fieldMap.lastName]: lastName } : {}),
+		...(joiningDate ? { [fieldMap.joiningDate]: joiningDate } : {}),
+		...(employmentType ? { [fieldMap.employmentType]: employmentType } : {}),
+		...(emergencyName ? { [fieldMap.emergencyName]: emergencyName } : {}),
+		...(emergencyPhone ? { [fieldMap.emergencyPhone]: emergencyPhone } : {}),
 	};
 
 	const { data, error } = await supabase
@@ -254,35 +253,27 @@ export const updateEmployeeService = async ({ id, body }) => {
 		.maybeSingle();
 
 	if (error) {
-		return { error: { status: 400, message: error.message } };
+		return serviceError(400, error.message);
 	}
 
-	if (!data) {
-		return { error: { status: 404, message: "Employee not found" } };
-	}
+	if (!data) return employeeNotFound();
 
 	return { employee: data };
 };
 
 export const deleteEmployeeService = async ({ id }) => {
-	const { data: employee, error: findError } = await supabase
-		.from("employees")
-		.select("id, auth_id")
-		.eq("id", id)
-		.maybeSingle();
+	const { data: employee, error: findError } = await employeeById(id, "id, auth_id");
 
 	if (findError) {
-		return { error: { status: 400, message: findError.message } };
+		return serviceError(400, findError.message);
 	}
 
-	if (!employee) {
-		return { error: { status: 404, message: "Employee not found" } };
-	}
+	if (!employee) return employeeNotFound();
 
 	const { error: deleteEmployeeError } = await supabase.from("employees").delete().eq("id", id);
 
 	if (deleteEmployeeError) {
-		return { error: { status: 400, message: deleteEmployeeError.message } };
+		return serviceError(400, deleteEmployeeError.message);
 	}
 
 	if (employee.auth_id) {

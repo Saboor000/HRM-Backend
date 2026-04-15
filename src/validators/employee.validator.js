@@ -1,108 +1,61 @@
 import Joi from "joi";
 
-const roleSchema = Joi.string().trim().valid("employee", "hr", "manager");
+const designationSchema = Joi.string().trim().valid("admin", "employee", "hr", "manager");
+const uuid = Joi.string().guid({ version: ["uuidv4", "uuidv5"] });
+const passwordRule = Joi.string().min(8).max(64);
+const isoDate = Joi.date().iso();
 
 export const createEmployeeSchema = Joi.object({
-  email: Joi.string().trim().email().required().messages({
-    "string.email": "Please provide a valid email address",
-    "any.required": "Email is required",
-  }),
-  password: Joi.string()
-    .min(8)
-    .max(64)
-    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$/)
-    .required()
-    .messages({
-      "string.min": "Password must be at least 8 characters",
-      "string.max": "Password cannot exceed 64 characters",
-      "string.pattern.base":
-        "Password must include uppercase, lowercase, number, and special character",
-      "any.required": "Password is required",
-    }),
-  role: roleSchema.default("employee").messages({
-    "any.only": "Role must be one of: employee, hr, manager",
-  }),
-  firstName: Joi.string().trim().min(2).max(50).required().messages({
-    "any.required": "firstName is required",
-  }),
-  lastName: Joi.string().trim().min(2).max(50).required().messages({
-    "any.required": "lastName is required",
-  }),
-  dob: Joi.date().iso().required().messages({
-    "date.format": "dob must be a valid ISO date",
-    "any.required": "dob is required",
-  }),
-  gender: Joi.string().trim().valid("male", "female", "other").required().messages({
-    "any.only": "gender must be one of: male, female, other",
-    "any.required": "gender is required",
-  }),
-  phone: Joi.string().trim().min(7).max(20).required().messages({
-    "any.required": "phone is required",
-  }),
-  address: Joi.string().trim().min(5).max(200).required().messages({
-    "any.required": "address is required",
-  }),
-  employeeId: Joi.string().trim().min(2).max(30).required().messages({
-    "any.required": "employeeId is required",
-  }),
-  department: Joi.string().trim().min(2).max(60).required().messages({
-    "any.required": "department is required",
-  }),
-  joiningDate: Joi.date().iso().required().messages({
-    "date.format": "joiningDate must be a valid ISO date",
-    "any.required": "joiningDate is required",
-  }),
-  employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern").required().messages({
-    "any.only": "employmentType must be one of: full_time, part_time, contract, intern",
-    "any.required": "employmentType is required",
-  }),
-  emergencyName: Joi.string().trim().min(2).max(80).required().messages({
-    "any.required": "emergencyName is required",
-  }),
-  emergencyPhone: Joi.string().trim().min(7).max(20).required().messages({
-    "any.required": "emergencyPhone is required",
-  }),
+  email: Joi.string().trim().email().required(),
+  password: passwordRule.required(),
+  designation: designationSchema.default("employee"),
+  firstName: Joi.string().trim().required(),
+  lastName: Joi.string().trim().required(),
+  dob: isoDate.required(),
+  gender: Joi.string().trim().valid("male", "female", "other").required(),
+  phone: Joi.string().trim().required(),
+  address: Joi.string().trim().required(),
+  employeeId: Joi.string().trim().required(),
+  department: Joi.string().trim().required(),
+  joiningDate: isoDate.required(),
+  employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern").required(),
+  emergencyName: Joi.string().trim().required(),
+  emergencyPhone: Joi.string().trim().required(),
 }).options({ allowUnknown: false });
 
 export const updateEmployeeSchema = Joi.object({
-  firstName: Joi.string().trim().min(2).max(50),
-  lastName: Joi.string().trim().min(2).max(50),
-  dob: Joi.date().iso(),
+  firstName: Joi.string().trim(),
+  lastName: Joi.string().trim(),
+  dob: isoDate,
   gender: Joi.string().trim().valid("male", "female", "other"),
-  phone: Joi.string().trim().min(7).max(20),
-  address: Joi.string().trim().min(5).max(200),
-  department: Joi.string().trim().min(2).max(60),
-  joiningDate: Joi.date().iso(),
+  phone: Joi.string().trim(),
+  address: Joi.string().trim(),
+  department: Joi.string().trim(),
+  joiningDate: isoDate,
   employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern"),
-  emergencyName: Joi.string().trim().min(2).max(80),
-  emergencyPhone: Joi.string().trim().min(7).max(20),
-  role: roleSchema,
+  emergencyName: Joi.string().trim(),
+  emergencyPhone: Joi.string().trim(),
+  designation: designationSchema,
   is_active: Joi.boolean(),
 })
   .min(1)
-  .messages({
-    "object.min": "At least one field is required to update employee",
-  })
   .options({ allowUnknown: false });
 
 export const employeeIdParamSchema = Joi.object({
-  id: Joi.string().guid({ version: ["uuidv4", "uuidv5"] }).required().messages({
-    "string.guid": "Employee id must be a valid UUID",
-    "any.required": "Employee id is required",
-  }),
+  id: uuid.required(),
 }).options({ allowUnknown: false });
 
 export const employeeListQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(10),
   search: Joi.string().trim().max(100).allow(""),
-  role: Joi.string().trim().valid("employee", "hr", "manager"),
+  role: Joi.string().trim().valid("admin", "employee", "hr", "manager"),
   department: Joi.string().trim().max(60),
   employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern"),
   gender: Joi.string().trim().valid("male", "female", "other"),
   sortBy: Joi.string()
     .trim()
-    .valid("created_at", "joining_date", "first_name", "last_name", "department", "role")
+    .valid("created_at", "joining_date", "first_name", "last_name", "department", "designation")
     .default("created_at"),
   sortOrder: Joi.string().trim().valid("asc", "desc").default("desc"),
 }).options({ allowUnknown: false });

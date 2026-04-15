@@ -1,62 +1,29 @@
-export const validateBody = (schema) => {
-  return (req, res, next) => {
-    const { error, value } = schema.validate(req.body, {
-      abortEarly: false,
-      stripUnknown: true,
-      convert: true,
+const validate = (schema, getter, setter) => (req, res, next) => {
+  const { error, value } = schema.validate(getter(req), {
+    abortEarly: false,
+    stripUnknown: true,
+    convert: true,
+  });
+
+  if (error) {
+    return res.status(422).json({
+      message: error.details?.[0]?.message || "Validation failed",
     });
+  }
 
-    if (error) {
-      const firstErrorMessage = error.details?.[0]?.message || "Validation failed";
+  setter(req, value);
+  return next();
+};
 
-      return res.status(422).json({
-        message: firstErrorMessage,
-      });
-    }
-
+export const validateBody = (schema) =>
+  validate(schema, (req) => req.body, (req, value) => {
     req.body = value;
-    return next();
-  };
-};
-
-export const validateParams = (schema) => {
-  return (req, res, next) => {
-    const { error, value } = schema.validate(req.params, {
-      abortEarly: false,
-      stripUnknown: true,
-      convert: true,
-    });
-
-    if (error) {
-      const firstErrorMessage = error.details?.[0]?.message || "Validation failed";
-
-      return res.status(422).json({
-        message: firstErrorMessage,
-      });
-    }
-
+  });
+export const validateParams = (schema) =>
+  validate(schema, (req) => req.params, (req, value) => {
     req.params = value;
-    return next();
-  };
-};
-
-export const validateQuery = (schema) => {
-  return (req, res, next) => {
-    const { error, value } = schema.validate(req.query, {
-      abortEarly: false,
-      stripUnknown: true,
-      convert: true,
-    });
-
-    if (error) {
-      const firstErrorMessage = error.details?.[0]?.message || "Validation failed";
-
-      return res.status(422).json({
-        message: firstErrorMessage,
-      });
-    }
-
+  });
+export const validateQuery = (schema) =>
+  validate(schema, (req) => req.query, (req, value) => {
     req.validatedQuery = value;
-    return next();
-  };
-};
+  });

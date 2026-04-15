@@ -43,7 +43,7 @@ leaveRouter.get(
 );
 leaveRouter.patch(
   "/leave/:id/approve",
-  authorize("admin","hr"),
+  authorize("admin", "hr"),
   validateParams(leaveIdParamSchema),
   approveLeave,
 );
