@@ -5,12 +5,12 @@ export const notFound = (req, res, next) => {
 };
 
 export const errorHandler = (err, req, res, next) => {
+  void req;
+  void next;
   if (err?.name === "MulterError") {
-    const message = err.code === "LIMIT_FILE_SIZE"
-      ? "File too large. Maximum allowed size is 5MB"
-      : err.message;
-
-    return res.status(400).json({ message });
+    return res.status(400).json({
+      message: err.code === "LIMIT_FILE_SIZE" ? "File too large. Maximum allowed size is 5MB" : err.message,
+    });
   }
 
   if (err?.message?.includes("Invalid file type") || err?.message?.includes("Unexpected file field")) {

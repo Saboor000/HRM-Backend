@@ -1,8 +1,14 @@
 import jwt from "jsonwebtoken";
 import { supabase, supabaseAuth } from "../config/supabase.js";
 
-const getRole = (user) => user?.app_metadata?.role || user?.user_metadata?.role || "employee";
+const getRole = (user) => {
+  const userRole = user?.app_metadata?.role || user?.user_metadata?.role || "employee";
+  // Map all roles to either "admin" or "user"
+  return userRole === "admin" ? "admin" : "user";
+};
 const getName = (user) => user?.user_metadata?.name || null;
+const trimOrNull = (value) => (typeof value === "string" && value.trim() ? value.trim() : null);
+const badRequest = (res, error) => res.status(400).json({ message: error.message });
 
 const mapAuthUser = (user) => ({
   id: user.id,
@@ -11,21 +17,8 @@ const mapAuthUser = (user) => ({
   name: getName(user),
 });
 
-const createToken = (user) => {
-  return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      role: getRole(user),
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
-};
-
-const normalizeName = (name) => {
-  return typeof name === "string" && name.trim() ? name.trim() : null;
-};
+const createToken = (user, role = getRole(user)) =>
+  jwt.sign({ auth_id: user.id, email: user.email, role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 
 const listAllAuthUsers = async () => {
   const users = [];
@@ -51,7 +44,7 @@ const listAllAuthUsers = async () => {
   return { users };
 };
 
-const createAuthUser = async ({ email, password, name, role = "employee" }) => {
+const createAuthUser = async ({ email, password, name, role = "user" }) => {
   if (role === "admin") {
     return {
       error: {
@@ -61,18 +54,12 @@ const createAuthUser = async ({ email, password, name, role = "employee" }) => {
     };
   }
 
-  const normalizedName = normalizeName(name);
-
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
-    app_metadata: {
-      role,
-    },
     user_metadata: {
-      name: normalizedName,
-      role,
+      name: trimOrNull(name),
     },
   });
 
@@ -107,12 +94,26 @@ export const signin = async (req, res, next) => {
       return res.status(401).json({ message: error?.message || "Invalid credentials" });
     }
 
-    const token = createToken(data.user);
+    const { data: employee, error: employeeError } = await supabase
+      .from("employees")
+      .select("designation")
+      .eq("auth_id", data.user.id)
+      .maybeSingle();
+
+    if (employeeError) return badRequest(res, employeeError);
+    const jwtRole = employee?.designation === "admin" ? "admin" : "user";
+    const token = createToken(data.user, jwtRole);
 
     return res.status(200).json({
       message: "Login successful",
       token,
-      user: mapAuthUser(data.user),
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        role: jwtRole,
+        designation: employee?.designation || "employee",
+        name: data.user.user_metadata?.name || null,
+      },
     });
   } catch (error) {
     return next(error);
@@ -121,13 +122,11 @@ export const signin = async (req, res, next) => {
 
 export const getUserDetails = async (req, res, next) => {
   try {
-    const { id } = req.user;
+    const { auth_id } = req.user;
 
-    const { data: authUserData, error: authUserError } = await supabase.auth.admin.getUserById(id);
+    const { data: authUserData, error: authUserError } = await supabase.auth.admin.getUserById(auth_id);
 
-    if (authUserError) {
-      return res.status(400).json({ message: authUserError.message });
-    }
+    if (authUserError) return badRequest(res, authUserError);
 
     if (!authUserData?.user) {
       return res.status(404).json({ message: "User profile not found" });
@@ -136,15 +135,19 @@ export const getUserDetails = async (req, res, next) => {
     const { data: employee, error: employeeError } = await supabase
       .from("employees")
       .select("*")
-      .eq("auth_id", id)
+      .eq("auth_id", auth_id)
       .maybeSingle();
 
-    if (employeeError) {
-      return res.status(400).json({ message: employeeError.message });
-    }
+    if (employeeError) return badRequest(res, employeeError);
 
     return res.status(200).json({
-      user: mapAuthUser(authUserData.user),
+      user: {
+        id: authUserData.user.id,
+        email: authUserData.user.email,
+        role: req.user.role,
+        designation: employee?.designation || "employee",
+        name: authUserData.user.user_metadata?.name || null,
+      },
       employee: employee || null,
     });
   } catch (error) {
@@ -175,9 +178,7 @@ export const getUsersByAdmin = async (req, res, next) => {
   try {
     const { users, error } = await listAllAuthUsers();
 
-    if (error) {
-      return res.status(400).json({ message: error.message });
-    }
+    if (error) return badRequest(res, error);
 
     const mappedUsers = users.map(mapAuthUser).sort((a, b) => a.email.localeCompare(b.email));
 
@@ -196,9 +197,7 @@ export const getUserByIdByAdmin = async (req, res, next) => {
 
     const { data, error } = await supabase.auth.admin.getUserById(id);
 
-    if (error) {
-      return res.status(400).json({ message: error.message });
-    }
+    if (error) return badRequest(res, error);
 
     if (!data?.user) {
       return res.status(404).json({ message: "User not found" });
@@ -220,9 +219,7 @@ export const updateUserByAdmin = async (req, res, next) => {
 
     const { data: targetAuthData, error: targetUserError } = await supabase.auth.admin.getUserById(id);
 
-    if (targetUserError) {
-      return res.status(400).json({ message: targetUserError.message });
-    }
+    if (targetUserError) return badRequest(res, targetUserError);
 
     const targetUser = targetAuthData?.user ? mapAuthUser(targetAuthData.user) : null;
 
@@ -240,16 +237,13 @@ export const updateUserByAdmin = async (req, res, next) => {
 
     const authUpdates = {};
 
-    if (typeof email === "string" && email.trim()) {
-      authUpdates.email = email.trim();
-    }
+    const nextEmail = trimOrNull(email);
+    const nextPassword = trimOrNull(password);
+    if (nextEmail) authUpdates.email = nextEmail;
+    if (nextPassword) authUpdates.password = nextPassword;
 
-    if (typeof password === "string" && password.trim()) {
-      authUpdates.password = password.trim();
-    }
-
-    const nextName = typeof name === "string" && name.trim() ? name.trim() : targetUser.name;
-    const nextRole = typeof role === "string" && role.trim() ? role.trim() : targetUser.role;
+    const nextName = trimOrNull(name) || targetUser.name;
+    const nextRole = trimOrNull(role) || targetUser.role;
 
     if (nextName !== targetUser.name || nextRole !== targetUser.role) {
       authUpdates.app_metadata = {
@@ -265,16 +259,12 @@ export const updateUserByAdmin = async (req, res, next) => {
 
     if (Object.keys(authUpdates).length > 0) {
       const { error: authUpdateError } = await supabase.auth.admin.updateUserById(id, authUpdates);
-      if (authUpdateError) {
-        return res.status(400).json({ message: authUpdateError.message });
-      }
+      if (authUpdateError) return badRequest(res, authUpdateError);
     }
 
     const { data: refreshedUserData, error: refreshedUserError } = await supabase.auth.admin.getUserById(id);
 
-    if (refreshedUserError) {
-      return res.status(400).json({ message: refreshedUserError.message });
-    }
+    if (refreshedUserError) return badRequest(res, refreshedUserError);
 
     return res.status(200).json({
       message: "User updated successfully",
@@ -295,9 +285,7 @@ export const deleteUserByAdmin = async (req, res, next) => {
 
     const { data: targetAuthData, error: targetUserError } = await supabase.auth.admin.getUserById(id);
 
-    if (targetUserError) {
-      return res.status(400).json({ message: targetUserError.message });
-    }
+    if (targetUserError) return badRequest(res, targetUserError);
 
     const targetUser = targetAuthData?.user ? mapAuthUser(targetAuthData.user) : null;
 
@@ -310,9 +298,7 @@ export const deleteUserByAdmin = async (req, res, next) => {
     }
 
     const { error: authDeleteError } = await supabase.auth.admin.deleteUser(id);
-    if (authDeleteError) {
-      return res.status(400).json({ message: authDeleteError.message });
-    }
+    if (authDeleteError) return badRequest(res, authDeleteError);
 
     return res.status(200).json({ message: "User deleted successfully" });
   } catch (error) {
