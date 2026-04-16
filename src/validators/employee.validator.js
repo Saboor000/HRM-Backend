@@ -64,20 +64,38 @@ export const createEmployeeSchema = Joi.object({
   }),
 }).options({ allowUnknown: false });
 
+// export const updateEmployeeSchema = Joi.object({
+//   firstName: Joi.string().trim().min(2).max(50),
+//   lastName: Joi.string().trim().min(2).max(50),
+//   dob: Joi.date().iso(),
+//   gender: Joi.string().trim().valid("male", "female", "other"),
+//   phone: Joi.string().trim().min(7).max(20),
+//   address: Joi.string().trim().min(5).max(200),
+//   department: Joi.string().trim().min(2).max(60),
+//   joiningDate: Joi.date().iso(),
+//   employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern"),
+//   emergencyName: Joi.string().trim().min(2).max(80),
+//   emergencyPhone: Joi.string().trim().min(7).max(20),
+//   role: roleSchema,
+//   is_active: Joi.boolean(),
+// })
+// validators/employee.validator.js
+
 export const updateEmployeeSchema = Joi.object({
-  firstName: Joi.string().trim().min(2).max(50),
-  lastName: Joi.string().trim().min(2).max(50),
-  dob: Joi.date().iso(),
-  gender: Joi.string().trim().valid("male", "female", "other"),
-  phone: Joi.string().trim().min(7).max(20),
-  address: Joi.string().trim().min(5).max(200),
-  department: Joi.string().trim().min(2).max(60),
-  joiningDate: Joi.date().iso(),
-  employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern"),
-  emergencyName: Joi.string().trim().min(2).max(80),
-  emergencyPhone: Joi.string().trim().min(7).max(20),
-  role: roleSchema,
-  is_active: Joi.boolean(),
+
+  firstName:       Joi.string().optional(),
+  lastName:        Joi.string().optional(),
+  dob:             Joi.string().optional(),
+  gender:          Joi.string().valid("male", "female", "other").optional(),
+  phone:           Joi.string().optional(),
+  address:         Joi.string().optional(),
+  employeeId:      Joi.string().optional(),
+  department:      Joi.string().optional(),
+  role:            Joi.string().valid("employee", "hr", "manager").optional(),
+  joiningDate:     Joi.string().optional(),
+  employmentType:  Joi.string().valid("full_time", "part_time", "contract", "intern").optional(),
+  emergencyName:   Joi.string().optional(),
+  emergencyPhone:  Joi.string().optional(),
 })
   .min(1)
   .messages({

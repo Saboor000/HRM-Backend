@@ -56,9 +56,17 @@ employeeRouter.get(
   getEmployeeById,
 );
 
+// employeeRouter.put(
+//   "/employee/:id",
+//   authorize("admin", "hr"),
+//   validateParams(employeeIdParamSchema),
+//   validateBody(updateEmployeeSchema),
+//   updateEmployee,
+// );
 employeeRouter.put(
   "/employee/:id",
   authorize("admin", "hr"),
+  uploadFields,                        // ← ADD THIS (multer must run before body is parsed)
   validateParams(employeeIdParamSchema),
   validateBody(updateEmployeeSchema),
   updateEmployee,

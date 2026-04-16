@@ -114,7 +114,7 @@ export const createEmployeeService = async ({ body, user, files }) => {
 				address,
 				employee_id: employeeId,
 				department,
-				role: targetRole,
+				designation: targetRole,
 				joining_date: joiningDate,
 				employment_type: employmentType,
 				emergency_name: emergencyName,
@@ -164,7 +164,7 @@ export const getAllEmployeesService = async (queryParams = {}) => {
 
 	let query = supabase.from("employees").select("*", { count: "exact" });
 
-	if (role) query = query.eq("role", role);
+	if (role) query = query.eq("designation", role);
 	if (department) query = query.ilike("department", `%${department}%`);
 	if (employmentType) query = query.eq("employment_type", employmentType);
 	if (gender) query = query.eq("gender", gender);
@@ -225,45 +225,111 @@ export const getEmployeeByIdService = async ({ id, user }) => {
 	return { employee: data };
 };
 
-export const updateEmployeeService = async ({ id, body }) => {
+// export const updateEmployeeService = async ({ id, body }) => {
+// 	const {
+// 		firstName,
+// 		lastName,
+// 		joiningDate,
+// 		employmentType,
+// 		emergencyName,
+// 		emergencyPhone,
+// 		...rest
+// 	} = body;
+
+// 	const updates = {
+// 		...rest,
+// 		...(firstName ? { first_name: firstName } : {}),
+// 		...(lastName ? { last_name: lastName } : {}),
+// 		...(joiningDate ? { joining_date: joiningDate } : {}),
+// 		...(employmentType ? { employment_type: employmentType } : {}),
+// 		...(emergencyName ? { emergency_name: emergencyName } : {}),
+// 		...(emergencyPhone ? { emergency_phone: emergencyPhone } : {}),
+// 	};
+
+// 	const { data, error } = await supabase
+// 		.from("employees")
+// 		.update(updates)
+// 		.eq("id", id)
+// 		.select("*")
+// 		.maybeSingle();
+
+// 	if (error) {
+// 		return { error: { status: 400, message: error.message } };
+// 	}
+
+// 	if (!data) {
+// 		return { error: { status: 404, message: "Employee not found" } };
+// 	}
+
+// 	return { employee: data };
+// };
+export const updateEmployeeService = async ({ id, body = {}, files }) => {
 	const {
-		firstName,
-		lastName,
-		joiningDate,
-		employmentType,
-		emergencyName,
-		emergencyPhone,
-		...rest
+	  firstName,
+	  lastName,
+	  joiningDate,
+	  employmentType,
+	  emergencyName,
+	  emergencyPhone,
+	  role,
+
+	  dob,
+	  gender,
+	  phone,
+	  address,
+	  department,
+	  employeeId,
 	} = body;
-
+  
+	// Upload any newly provided files
+	const cnic_url        = files ? await uploadSingle(files, "cnic",       "cnic")      : undefined;
+	const degree_url      = files ? await uploadSingle(files, "degree",     "degree")    : undefined;
+	const passport_url    = files ? await uploadSingle(files, "passport",   "passport")  : undefined;
+	const profile_pic_url = files ? await uploadSingle(files, "profilePic", "profile")   : undefined;
+	const contract_url    = files ? await uploadSingle(files, "contract",   "contract")  : undefined;
+	const other_docs      = files ? await uploadMultiple(files, "otherDocs", "other")    : undefined;
+  
+	// Build update object — only include fields that were actually sent
 	const updates = {
-		...rest,
-		...(firstName ? { first_name: firstName } : {}),
-		...(lastName ? { last_name: lastName } : {}),
-		...(joiningDate ? { joining_date: joiningDate } : {}),
-		...(employmentType ? { employment_type: employmentType } : {}),
-		...(emergencyName ? { emergency_name: emergencyName } : {}),
-		...(emergencyPhone ? { emergency_phone: emergencyPhone } : {}),
+	
+	  ...(firstName      ? { first_name: firstName }           : {}),
+	  ...(lastName       ? { last_name: lastName }             : {}),
+	  ...(dob            ? { dob }                             : {}),
+	  ...(gender         ? { gender }                          : {}),
+	  ...(phone          ? { phone }                           : {}),
+	  ...(address        ? { address }                         : {}),
+	  ...(department     ? { department }                      : {}),
+	  ...(employeeId     ? { employee_id: employeeId }         : {}),
+	  ...(role           ? { designation: role }               : {}),
+	  ...(joiningDate    ? { joining_date: joiningDate }       : {}),
+	  ...(employmentType ? { employment_type: employmentType } : {}),
+	  ...(emergencyName  ? { emergency_name: emergencyName }   : {}),
+	  ...(emergencyPhone ? { emergency_phone: emergencyPhone } : {}),
+	  // Files — only overwrite if a new file was uploaded
+	  ...(cnic_url          ? { cnic_url }          : {}),
+	  ...(degree_url        ? { degree_url }        : {}),
+	  ...(passport_url      ? { passport_url }      : {}),
+	  ...(profile_pic_url   ? { profile_pic_url }   : {}),
+	  ...(contract_url      ? { contract_url }      : {}),
+	  ...(other_docs?.length ? { other_docs }       : {}),
 	};
-
+  
+	if (Object.keys(updates).length === 0) {
+	  return { error: { status: 400, message: "No fields provided to update" } };
+	}
+  
 	const { data, error } = await supabase
-		.from("employees")
-		.update(updates)
-		.eq("id", id)
-		.select("*")
-		.maybeSingle();
-
-	if (error) {
-		return { error: { status: 400, message: error.message } };
-	}
-
-	if (!data) {
-		return { error: { status: 404, message: "Employee not found" } };
-	}
-
+	  .from("employees")
+	  .update(updates)
+	  .eq("id", id)
+	  .select("*")
+	  .maybeSingle();
+  
+	if (error) return { error: { status: 400, message: error.message } };
+	if (!data)  return { error: { status: 404, message: "Employee not found" } };
+  
 	return { employee: data };
-};
-
+  };
 export const deleteEmployeeService = async ({ id }) => {
 	const { data: employee, error: findError } = await supabase
 		.from("employees")

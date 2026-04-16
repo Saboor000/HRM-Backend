@@ -52,15 +52,42 @@ export const getEmployeeById = async (req, res) => {
   }
 };
 
+// export const updateEmployee = async (req, res) => {
+//   try {
+//     const result = await updateEmployeeService({ id: req.params.id, body: req.body });
+
+//     if (result?.error) {
+//       return res.status(result.error.status).json({ message: result.error.message });
+//     }
+
+//     return res.status(200).json({ message: "Updated successfully", employee: result.employee });
+//   } catch (err) {
+//     return res.status(500).json({ message: err.message });
+//   }
+// };
 export const updateEmployee = async (req, res) => {
   try {
-    const result = await updateEmployeeService({ id: req.params.id, body: req.body });
+    const result = await updateEmployeeService({
+      id: req.params.id,
+      body: req.body,
+      files: req.files,
+    });
 
     if (result?.error) {
       return res.status(result.error.status).json({ message: result.error.message });
     }
 
-    return res.status(200).json({ message: "Updated successfully", employee: result.employee });
+    // If password was provided, update it in Supabase Auth too
+    if (req.body.password && result.employee?.auth_id) {
+      await supabase.auth.admin.updateUserById(result.employee.auth_id, {
+        password: req.body.password,
+      });
+    }
+
+    return res.status(200).json({
+      message: "Updated successfully",
+      employee: result.employee,
+    });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
