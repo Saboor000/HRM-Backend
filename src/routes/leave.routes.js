@@ -2,12 +2,12 @@ import { Router } from "express";
 import { authorize, protect } from "../middleware/auth.middleware.js";
 import {
   applyLeave,
-  approveLeave,
   cancelLeave,
   getLeaveById,
   getLeaves,
+  hrLeaveAction,
+  managerLeaveAction,
   getMyLeaves,
-  rejectLeave,
 } from "../controllers/leave.controller.js";
 import {
   validateBody,
@@ -19,40 +19,43 @@ import {
   createLeaveSchema,
   leaveIdParamSchema,
   leaveListQuerySchema,
-  rejectLeaveSchema,
+  leaveDecisionSchema,
 } from "../validators/leave.validator.js";
 
 const leaveRouter = Router();
+const validateLeaveId = validateParams(leaveIdParamSchema);
+const adminHr = authorize("admin", "hr");
 
 leaveRouter.use(protect);
 
 leaveRouter.post("/leave/apply", validateBody(createLeaveSchema), applyLeave);
 leaveRouter.get("/leave/my", validateQuery(leaveListQuerySchema), getMyLeaves);
-leaveRouter.get("/leave/:id", validateParams(leaveIdParamSchema), getLeaveById);
+leaveRouter.get("/leave/:id", validateLeaveId, getLeaveById);
 leaveRouter.patch(
   "/leave/:id/cancel",
-  validateParams(leaveIdParamSchema),
+  validateLeaveId,
   validateBody(cancelLeaveSchema),
   cancelLeave,
 );
 leaveRouter.get(
   "/leaves",
-  authorize("admin", "hr"),
+  adminHr,
   validateQuery(leaveListQuerySchema),
   getLeaves,
 );
 leaveRouter.patch(
-  "/leave/:id/approve",
-  authorize("admin","hr"),
-  validateParams(leaveIdParamSchema),
-  approveLeave,
+  "/leave/:id/manager-action",
+  authorize("admin", "manager"),
+  validateLeaveId,
+  validateBody(leaveDecisionSchema),
+  managerLeaveAction,
 );
 leaveRouter.patch(
-  "/leave/:id/reject",
-  authorize("admin", "hr"),
-  validateParams(leaveIdParamSchema),
-  validateBody(rejectLeaveSchema),
-  rejectLeave,
+  "/leave/:id/hr-action",
+  adminHr,
+  validateLeaveId,
+  validateBody(leaveDecisionSchema),
+  hrLeaveAction,
 );
 
 export default leaveRouter;

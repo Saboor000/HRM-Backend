@@ -1,4 +1,3 @@
-// routes/employee.routes.js
 import express from "express";
 import {
   createEmployee,
@@ -8,8 +7,7 @@ import {
   deleteEmployee,
 } from "../controllers/employee.controller.js";
 
-import { protect } from "../middleware/auth.middleware.js";
-import { authorize } from "../middleware/auth.middleware.js";
+import { authorize, protect } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/upload.middleware.js";
 import { validateBody, validateParams, validateQuery } from "../middleware/validateRequest.middleware.js";
 import {
@@ -23,7 +21,6 @@ const employeeRouter = express.Router();
 
 employeeRouter.use(protect);
 
-// 🔥 File Upload Fields
 const uploadFields = upload.fields([
   { name: "cnic", maxCount: 1 },
   { name: "degree", maxCount: 1 },
@@ -33,7 +30,6 @@ const uploadFields = upload.fields([
   { name: "otherDocs", maxCount: 5 },
 ]);
 
-// HR/Admin
 employeeRouter.post(
   "/employee",
   authorize("admin", "hr"),

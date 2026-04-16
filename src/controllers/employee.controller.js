@@ -6,49 +6,43 @@ import {
   updateEmployeeService,
 } from "../services/employee.service.js";
 
+const handleServiceResult = (res, result, successStatus = 200, successBody = result) => {
+  if (result?.error) {
+    return res.status(result.error.status).json({ message: result.error.message });
+  }
+  return res.status(successStatus).json(successBody);
+};
+
+const handleServerError = (res, err) => res.status(500).json({ message: err.message });
+
 export const createEmployee = async (req, res) => {
   try {
     const result = await createEmployeeService({ body: req.body, user: req.user, files: req.files });
-
-    if (result?.error) {
-      return res.status(result.error.status).json({ message: result.error.message });
-    }
-
-    return res.status(201).json({
+    return handleServiceResult(res, result, 201, {
       message: "Employee created successfully",
       employee: result.employee,
       user: result.user,
     });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return handleServerError(res, err);
   }
 };
 
 export const getAllEmployees = async (req, res) => {
   try {
     const result = await getAllEmployeesService(req.validatedQuery || req.query);
-
-    if (result?.error) {
-      return res.status(result.error.status).json({ message: result.error.message });
-    }
-
-    return res.status(200).json(result);
+    return handleServiceResult(res, result);
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return handleServerError(res, err);
   }
 };
 
 export const getEmployeeById = async (req, res) => {
   try {
     const result = await getEmployeeByIdService({ id: req.params.id, user: req.user });
-
-    if (result?.error) {
-      return res.status(result.error.status).json({ message: result.error.message });
-    }
-
-    return res.status(200).json({ employee: result.employee });
+    return handleServiceResult(res, result, 200, { employee: result.employee });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return handleServerError(res, err);
   }
 };
 
@@ -89,20 +83,15 @@ export const updateEmployee = async (req, res) => {
       employee: result.employee,
     });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return handleServerError(res, err);
   }
 };
 
 export const deleteEmployee = async (req, res) => {
   try {
     const result = await deleteEmployeeService({ id: req.params.id });
-
-    if (result?.error) {
-      return res.status(result.error.status).json({ message: result.error.message });
-    }
-
-    return res.status(200).json({ message: result.message });
+    return handleServiceResult(res, result, 200, { message: result.message });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return handleServerError(res, err);
   }
 };

@@ -7,6 +7,7 @@ import { notFound, errorHandler } from "./middleware/error.middleware.js";
 import { supabase } from "./config/supabase.js";
 import employeeRouter from "./routes/employee.routes.js";
 import leaveRouter from "./routes/leave.routes.js";
+import attendanceRouter from "./routes/attendance.routes.js";
 
 dotenv.config();
 
@@ -26,6 +27,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api", employeeRouter);
 app.use("/api", leaveRouter);
+app.use("/api", attendanceRouter);
 
 app.use(notFound);
 app.use(errorHandler);

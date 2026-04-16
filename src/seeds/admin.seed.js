@@ -50,7 +50,7 @@ const ensureAdminEmployeeProfile = async (authUser, name) => {
         first_name: firstName,
         last_name: lastName,
         employee_id: buildAdminEmployeeId(authUser.id),
-        role: "admin",
+        designation: "admin",
       },
     ])
     .select("id")
