@@ -5,6 +5,7 @@ import {
   getShiftChangeRequestsService,
   getShiftChangeRequestByIdService,
 } from "../../services/attendance/shift-request.service.js";
+import { employeeByAuth } from "../../services/attendance/assignment.service.js";
 
 const toInt = (value) => Number.parseInt(value, 10);
 const send = (res, status, message, data, pagination) =>
@@ -18,7 +19,7 @@ const send = (res, status, message, data, pagination) =>
 const getListFilters = (query, keys) =>
   keys.reduce((acc, key) => {
     if (query[key] !== undefined) {
-      acc[key] = key === "is_active" ? query[key] === "true" : query[key];
+      acc[key] = query[key];
     }
     return acc;
   }, {});
@@ -38,6 +39,22 @@ export const getShiftChangeRequests = async (req, res, next) => {
     const filters = getListFilters(req.query, ["employee_id", "status"]);
     const data = await getShiftChangeRequestsService(filters, toInt(page), toInt(limit));
     send(res, 200, "Shift change requests retrieved successfully", data.data, data.pagination);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getMyShiftChangeRequests = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 10 } = req.query;
+    const employee = await employeeByAuth(req.user.id);
+    const filters = getListFilters(req.query, ["status"]);
+    const data = await getShiftChangeRequestsService(
+      { ...filters, employee_id: employee.id },
+      toInt(page),
+      toInt(limit)
+    );
+    send(res, 200, "My shift change requests retrieved successfully", data.data, data.pagination);
   } catch (err) {
     next(err);
   }

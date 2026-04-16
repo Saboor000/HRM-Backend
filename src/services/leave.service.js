@@ -1,6 +1,10 @@
 import { supabase } from "../config/supabase.js";
 
 const error = (s, m) => Object.assign(new Error(m), { status: s });
+const todayDate = () => new Date().toISOString().slice(0, 10);
+const nowIso = () => new Date().toISOString();
+const ACTIVE_LEAVE_STATUSES = ["pending", "approved"];
+const DECISION_ACTIONS = new Set(["approved", "rejected"]);
 
 const employeeByAuth = async (authId, optional = false) => {
   if (!authId) throw error(401, "Unauthorized: missing auth user id in token");
@@ -39,6 +43,47 @@ const dateRange = (startDate, endDate) => {
 const getLeaveDates = (leave) =>
   leave.leave_type === "full_day" ? dateRange(leave.start_date, leave.end_date) : [toDate(leave.start_date)];
 
+const getRequestedLeaveDates = (payload) => {
+  const baseDate = toDate(payload.leave_date || payload.start_date) || todayDate();
+
+  if (payload.leave_type === "short_leave" || payload.leave_type === "half_day") {
+    return { startDate: baseDate, endDate: baseDate };
+  }
+
+  const startDate = toDate(payload.start_date) || baseDate;
+
+  if (payload.leave_type === "full_day") {
+    return {
+      startDate,
+      endDate: toDate(payload.end_date) || toDate(payload.leave_date) || startDate,
+    };
+  }
+
+  return { startDate, endDate: startDate };
+};
+
+const assertNoOverlappingLeaveRequest = async (employeeId, payload) => {
+  const { startDate: requestStart, endDate: requestEnd } = getRequestedLeaveDates(payload);
+
+  const overlapFilter =
+    `and(leave_type.eq.full_day,start_date.lte.${requestEnd},end_date.gte.${requestStart}),` +
+    `and(leave_type.neq.full_day,start_date.gte.${requestStart},start_date.lte.${requestEnd})`;
+
+  const { data, error: err } = await supabase
+    .from("leaves")
+    .select("id")
+    .eq("employee_id", employeeId)
+    .in("status", ACTIVE_LEAVE_STATUSES)
+    .or(overlapFilter)
+    .limit(1);
+
+  if (err) throw error(400, err.message);
+
+  if (data?.length) {
+    throw error(409, "Leave request already exists for the selected day");
+  }
+};
+
 const getAssignmentShiftForDate = async (employeeId, date) => {
   const { data, error: err } = await supabase
     .from("employee_shift_assignments")
@@ -54,7 +99,7 @@ const getAssignmentShiftForDate = async (employeeId, date) => {
 };
 
 const syncLeaveAttendanceRows = async (leave) => {
-  const now = new Date().toISOString();
+  const now = nowIso();
   const records = [];
 
   for (const date of getLeaveDates(leave)) {
@@ -115,6 +160,13 @@ export const calculateLeave = (d) => {
 
 const leaveSelect = `
   *,
+  employee:employees!employee_id(
+    id,
+    first_name,
+    last_name,
+    designation,
+    department
+  ),
   approver:employees!approved_by(
     id,
     first_name,
@@ -129,30 +181,142 @@ const leaveSelect = `
   )
 `;
 
+const updateLeaveAndFetch = async (id, updateData) => {
+  const { data, error: updateErr } = await supabase
+    .from("leaves")
+    .update(updateData)
+    .eq("id", id)
+    .select(leaveSelect)
+    .single();
+
+  if (updateErr) throw error(400, updateErr.message);
+  return data;
+};
+
+const assertDecisionAction = (action, actorLabel) => {
+  if (!DECISION_ACTIONS.has(action)) {
+    throw error(422, `Invalid ${actorLabel} action`);
+  }
+};
+
+const formatLeaveResponse = (leave) => {
+  if (!leave) return leave;
+  const { employee_id, ...rest } = leave;
+  return rest;
+};
+
 // ---------- create ----------
 export const createLeaveService = async (payload, user) => {
   const employee = await employeeByAuth(user.id);
-  const calc = calculateLeave(payload);
+  await assertNoOverlappingLeaveRequest(employee.id, payload);
+  const { startDate, endDate } = getRequestedLeaveDates(payload);
+  const calc = calculateLeave({
+    ...payload,
+    start_date: startDate,
+    end_date: endDate,
+  });
 
   const { data, error: err } = await supabase
     .from("leaves")
     .insert({
       employee_id: employee.id,
       leave_type: payload.leave_type,
-      start_date: payload.start_date || null,
-      end_date: payload.end_date || null,
+      start_date: startDate,
+      end_date: endDate,
       half_day_type: payload.half_day_type || null,
       start_time: payload.start_time || null,
       end_time: payload.end_time || null,
       reason: payload.reason || "",
       status: "pending",
+      manager_status: "pending",
+      hr_status: "pending",
       ...calc,
     })
-    .select("*")
+    .select(leaveSelect)
     .single();
 
   if (err) throw error(400, err.message);
-  return data;
+  return formatLeaveResponse(data);
+};
+
+const getLeaveForDecision = async (id) => {
+  const { data: leave, error: err } = await supabase
+    .from("leaves")
+    .select("id, employee_id, status, manager_status, hr_status")
+    .eq("id", id)
+    .single();
+
+  if (err || !leave) throw error(404, "Leave request not found");
+  return leave;
+};
+
+export const managerLeaveActionService = async (id, action, user, reason) => {
+  const leave = await getLeaveForDecision(id);
+  if (leave.status !== "pending") throw error(409, getStatusMessage(leave.status));
+  if (leave.manager_status !== "pending") throw error(409, "Manager has already taken action on this request");
+
+  const actor = await employeeOptional(user.auth_id || user.id);
+  const now = nowIso();
+  const isApproved = action === "approved";
+  const isRejected = action === "rejected";
+  assertDecisionAction(action, "manager");
+
+  const updateData = {
+    manager_status: action,
+    manager_approved_at: now,
+    updated_at: now,
+  };
+
+  if (isRejected) {
+    updateData.status = "rejected";
+    updateData.rejected_at = now;
+    updateData.rejected_by = actor?.id || null;
+    updateData.rejection_reason = reason || null;
+  }
+
+  const data = await updateLeaveAndFetch(id, updateData);
+  return formatLeaveResponse(data);
+};
+
+export const hrLeaveActionService = async (id, action, user, reason) => {
+  const leave = await getLeaveForDecision(id);
+  if (leave.status !== "pending") throw error(409, getStatusMessage(leave.status));
+  if (leave.manager_status !== "approved") {
+    throw error(409, "HR action is allowed only after manager approval");
+  }
+  if (leave.hr_status !== "pending") throw error(409, "HR has already taken action on this request");
+
+  const actor = await employeeOptional(user.auth_id || user.id);
+  const now = nowIso();
+  const isApproved = action === "approved";
+  const isRejected = action === "rejected";
+  assertDecisionAction(action, "HR");
+
+  const updateData = {
+    hr_status: action,
+    hr_approved_at: now,
+    updated_at: now,
+    status: action,
+  };
+
+  if (isApproved) {
+    updateData.approved_at = now;
+    updateData.approved_by = actor?.id || null;
+  }
+
+  if (isRejected) {
+    updateData.rejected_at = now;
+    updateData.rejected_by = actor?.id || null;
+    updateData.rejection_reason = reason || null;
+  }
+
+  const data = await updateLeaveAndFetch(id, updateData);
+
+  if (isApproved) {
+    await syncLeaveAttendanceRows(data);
+  }
+
+  return formatLeaveResponse(data);
 };
 
 // ---------- list ----------
@@ -161,6 +325,8 @@ export const getLeavesService = async ({ user, query = {}, ownOnly }) => {
     page = 1,
     limit = 10,
     status,
+    manager_status,
+    hr_status,
     leave_type,
     employee_id,
     start_date,
@@ -181,9 +347,11 @@ export const getLeavesService = async ({ user, query = {}, ownOnly }) => {
     q = q.eq("employee_id", emp.id);
   }
 
-  if (employee_id) q = q.eq("employee_id", employee_id);
-  if (status) q = q.eq("status", status);
-  if (leave_type) q = q.eq("leave_type", leave_type);
+  const exactFilters = { employee_id, status, manager_status, hr_status, leave_type };
+  for (const [key, value] of Object.entries(exactFilters)) {
+    if (value) q = q.eq(key, value);
+  }
+
   if (start_date) q = q.gte("start_date", toDate(start_date));
   if (end_date) q = q.lte("end_date", toDate(end_date));
 
@@ -191,7 +359,7 @@ export const getLeavesService = async ({ user, query = {}, ownOnly }) => {
   if (err) throw error(400, err.message);
 
   return {
-    leaves: data || [],
+    leaves: (data || []).map(formatLeaveResponse),
     pagination: {
       page,
       limit,
@@ -216,7 +384,7 @@ export const getLeaveByIdService = async ({ id, user }) => {
     if (emp.id !== data.employee_id) throw error(403, "Forbidden");
   }
 
-  return data;
+  return formatLeaveResponse(data);
 };
 
 // ---------- update status ----------
@@ -248,34 +416,27 @@ export const updateLeaveStatusService = async (id, status, user, reason) => {
 
   const base = {
     status,
-    updated_at: new Date().toISOString(),
+    updated_at: nowIso(),
   };
 
   if (status === "approved") {
-    base.approved_at = new Date().toISOString();
+    base.approved_at = nowIso();
     base.approved_by = emp?.id || null;
   }
 
   if (status === "rejected") {
-    base.rejected_at = new Date().toISOString();
+    base.rejected_at = nowIso();
     base.rejected_by = emp?.id || null;
     base.rejection_reason = reason || null;
   }
 
-  const { data, error: uErr } = await supabase
-    .from("leaves")
-    .update(base)
-    .eq("id", id)
-    .select(leaveSelect)
-    .single();
-
-  if (uErr) throw error(400, uErr.message);
+  const data = await updateLeaveAndFetch(id, base);
 
   if (status === "approved") {
     await syncLeaveAttendanceRows(data);
   }
 
-  return data;
+  return formatLeaveResponse(data);
 };
 
 // ---------- cancel ----------
@@ -294,17 +455,11 @@ export const cancelLeaveService = async (id, user, reason) => {
     if (emp.id !== leave.employee_id) throw error(403, "Forbidden");
   }
 
-  const { data, error: uErr } = await supabase
-    .from("leaves")
-    .update({
-      status: "cancelled",
-      rejection_reason: reason || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .select("*")
-    .single();
+  const data = await updateLeaveAndFetch(id, {
+    status: "cancelled",
+    rejection_reason: reason || null,
+    updated_at: nowIso(),
+  });
 
-  if (uErr) throw error(400, uErr.message);
-  return data;
+  return formatLeaveResponse(data);
 };

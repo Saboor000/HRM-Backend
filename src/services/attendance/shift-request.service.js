@@ -1,8 +1,14 @@
 import { supabase } from "../../config/supabase.js";
-import { employeeByAuth } from "./assignment.service.js";
+import { employeeByAuth, getEmployeeCurrentShiftService } from "./assignment.service.js";
 import { getShiftByIdService } from "./shift.service.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
+const SHIFT_REQUEST_SELECT = `
+  *,
+  employee:employee_id(id, first_name, last_name),
+  current_shift:current_shift_id(id, name, start_time, end_time),
+  requested_shift:requested_shift_id(id, name, start_time, end_time)
+`;
 const toPagination = (page, limit, count) => ({
   page,
   limit,
@@ -15,6 +21,21 @@ const ensurePendingStatus = (entity, action) => {
   if (entity.status !== "pending") {
     throw error(400, `Cannot ${action} a ${entity.status} request`);
   }
+};
+const updateShiftRequestStatus = async (id, approverId, status) => {
+  const { data, error: err } = await supabase
+    .from("shift_change_requests")
+    .update({
+      status,
+      approved_by: approverId,
+      approved_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select(SHIFT_REQUEST_SELECT)
+    .single();
+
+  if (err) throw error(400, err.message);
+  return data;
 };
 
 const normalizeDateOnly = (value, fieldName = "date") => {
@@ -52,8 +73,25 @@ export const createShiftChangeRequestService = async (userId, payload) => {
     const employee = await employeeByAuth(userId);
     const normalizedRequestDate = normalizeDateOnly(payload.request_date, "request_date");
 
-    await getShiftByIdService(payload.current_shift_id);
-    await getShiftByIdService(payload.requested_shift_id);
+    const assignedShift = await getEmployeeCurrentShiftService(employee.id, normalizedRequestDate);
+
+    if (!assignedShift?.shift_id || !assignedShift?.shift) {
+      throw error(400, "No current shift assignment found for the selected date");
+    }
+
+    if (!assignedShift.shift.is_active) {
+      throw error(400, "Current shift is inactive for the selected date");
+    }
+
+    if (assignedShift.shift_id !== payload.current_shift_id) {
+      throw error(400, "Provided current_shift_id does not match your assigned shift for the selected date");
+    }
+
+    const requestedShift = await getShiftByIdService(payload.requested_shift_id);
+
+    if (!requestedShift.is_active) {
+      throw error(400, "Requested shift is inactive");
+    }
 
     const { data: existing, error: existErr } = await supabase
       .from("shift_change_requests")
@@ -72,21 +110,14 @@ export const createShiftChangeRequestService = async (userId, payload) => {
       .from("shift_change_requests")
       .insert({
         employee_id: employee.id,
-        current_shift_id: payload.current_shift_id,
+        current_shift_id: assignedShift.shift_id,
         requested_shift_id: payload.requested_shift_id,
         request_date: normalizedRequestDate,
         reason: payload.reason || null,
         status: "pending",
         requested_at: new Date().toISOString(),
       })
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        current_shift:current_shift_id(id, name, start_time, end_time),
-        requested_shift:requested_shift_id(id, name, start_time, end_time)
-      `
-      )
+      .select(SHIFT_REQUEST_SELECT)
       .single();
 
     if (err) throw error(400, err.message);
@@ -105,26 +136,7 @@ export const approveShiftChangeRequestService = async (id, userId) => {
 
     ensurePendingStatus(request, "approve");
 
-    const { data, error: err } = await supabase
-      .from("shift_change_requests")
-      .update({
-        status: "approved",
-        approved_by: approver.id,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        current_shift:current_shift_id(id, name, start_time, end_time),
-        requested_shift:requested_shift_id(id, name, start_time, end_time)
-      `
-      )
-      .single();
-
-    if (err) throw error(400, err.message);
-    return data;
+    return updateShiftRequestStatus(id, approver.id, "approved");
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);
@@ -139,26 +151,7 @@ export const rejectShiftChangeRequestService = async (id, userId) => {
 
     ensurePendingStatus(request, "reject");
 
-    const { data, error: err } = await supabase
-      .from("shift_change_requests")
-      .update({
-        status: "rejected",
-        approved_by: approver.id,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        current_shift:current_shift_id(id, name, start_time, end_time),
-        requested_shift:requested_shift_id(id, name, start_time, end_time)
-      `
-      )
-      .single();
-
-    if (err) throw error(400, err.message);
-    return data;
+    return updateShiftRequestStatus(id, approver.id, "rejected");
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);
@@ -169,15 +162,7 @@ export const getShiftChangeRequestsService = async (filters, page, limit) => {
   try {
     let query = supabase
       .from("shift_change_requests")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        current_shift:current_shift_id(id, name, start_time, end_time),
-        requested_shift:requested_shift_id(id, name, start_time, end_time)
-      `,
-        { count: "exact" }
-      );
+      .select(SHIFT_REQUEST_SELECT, { count: "exact" });
 
     query = applyExactFilters(query, filters, ["employee_id", "status"]);
 
@@ -201,14 +186,7 @@ export const getShiftChangeRequestByIdService = async (id) => {
   try {
     const { data, error: err } = await supabase
       .from("shift_change_requests")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        current_shift:current_shift_id(id, name, start_time, end_time),
-        requested_shift:requested_shift_id(id, name, start_time, end_time)
-      `
-      )
+      .select(SHIFT_REQUEST_SELECT)
       .eq("id", id)
       .single();
 

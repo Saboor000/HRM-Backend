@@ -6,6 +6,7 @@ import {
   toggleShiftStatusService,
   deleteShiftService,
 } from "../../services/attendance/shift.service.js";
+import { employeeByAuth, getAssignmentsService } from "../../services/attendance/assignment.service.js";
 
 const toInt = (value) => Number.parseInt(value, 10);
 const send = (res, status, message, data, pagination) =>
@@ -30,6 +31,22 @@ export const getShifts = async (req, res, next) => {
     const { page = 1, limit = 10 } = req.query;
     const data = await getShiftsService(toInt(page), toInt(limit));
     send(res, 200, "Shifts retrieved successfully", data, data.pagination);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getMyShifts = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 10, is_active } = req.query;
+    const employee = await employeeByAuth(req.user.id);
+    const data = await getAssignmentsService({
+      page: toInt(page),
+      limit: toInt(limit),
+      employee_id: employee.id,
+      ...(is_active !== undefined ? { is_active: is_active === "true" } : {}),
+    });
+    send(res, 200, "My shifts retrieved successfully", data.data, data.pagination);
   } catch (err) {
     next(err);
   }

@@ -1,6 +1,20 @@
 import { supabase } from "../../config/supabase.js";
+import { employeeByAuth } from "./assignment.service.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
+const ATTENDANCE_SELECT = `
+  *,
+  employee:employee_id(id, first_name, last_name, designation, department),
+  shift:shifts(id, name, start_time, end_time, duration_hours)
+`;
+const LEAVE_SELECT = `
+  *,
+  employee:employee_id(id, first_name, last_name, designation, department)
+`;
+const LEAVE_ON_DATE_CONDITION = (date) =>
+  `and(leave_type.eq.full_day,start_date.lte.${date},end_date.gte.${date}),` +
+  `and(leave_type.eq.half_day,start_date.eq.${date}),` +
+  `and(leave_type.eq.short_leave,start_date.eq.${date})`;
 
 const PRESENT_STATUSES = new Set(["online", "offline", "PRESENT", "ON_LEAVE_WORKING"]);
 const ABSENT_STATUSES = new Set(["absent", "ABSENT"]);
@@ -33,23 +47,15 @@ const filterLeaveRecordsAlreadyInAttendance = (attendanceData, leaveData) => {
     (leave) => !leaveDates(leave).some((date) => attendanceLeaveKeys.has(`${leave.employee_id}|${date}`))
   );
 };
+const applyDepartmentFilter = (query, department) =>
+  department ? query.filter("employee.department", "eq", department) : query;
+const toTypedRecords = (records, type) => records.map((record) => ({ ...record, type }));
+const toDateOnly = (value) => (value ? new Date(value).toISOString().split("T")[0] : value);
 
 export const getDailyAttendanceReportService = async (date, department) => {
   try {
-    let queryAttendance = supabase.from("attendance_records").select(
-      `
-      *,
-      employee:employee_id(id, first_name, last_name, designation, department),
-      shift:shifts(id, name, start_time, end_time, duration_hours)
-    `,
-      { count: "exact" }
-    );
-
-    queryAttendance = queryAttendance.eq("date", date);
-
-    if (department) {
-      queryAttendance = queryAttendance.filter("employee.department", "eq", department);
-    }
+    let queryAttendance = supabase.from("attendance_records").select(ATTENDANCE_SELECT, { count: "exact" });
+    queryAttendance = applyDepartmentFilter(queryAttendance.eq("date", date), department);
 
     const { data: attendanceData, error: attendanceErr } = await queryAttendance.order("created_at", {
       ascending: false,
@@ -59,32 +65,17 @@ export const getDailyAttendanceReportService = async (date, department) => {
 
     let queryLeaves = supabase
       .from("leaves")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department)
-      `
-      )
+      .select(LEAVE_SELECT)
       .eq("status", "approved")
-      .or(
-        `and(leave_type.eq.full_day,start_date.lte.${date},end_date.gte.${date}),` +
-          `and(leave_type.eq.half_day,start_date.eq.${date}),` +
-          `and(leave_type.eq.short_leave,start_date.eq.${date})`
-      );
-
-    if (department) {
-      queryLeaves = queryLeaves.filter("employee.department", "eq", department);
-    }
+      .or(LEAVE_ON_DATE_CONDITION(date));
+    queryLeaves = applyDepartmentFilter(queryLeaves, department);
 
     const { data: leaveData, error: leaveErr } = await queryLeaves;
     if (leaveErr) throw error(400, leaveErr.message);
 
     const visibleLeaveData = filterLeaveRecordsAlreadyInAttendance(attendanceData, leaveData);
 
-    const allRecords = [
-      ...attendanceData.map((r) => ({ ...r, type: "attendance" })),
-      ...visibleLeaveData.map((l) => ({ ...l, type: "leave" })),
-    ];
+    const allRecords = [...toTypedRecords(attendanceData, "attendance"), ...toTypedRecords(visibleLeaveData, "leave")];
 
     const summary = {
       total_employees: new Set([
@@ -118,13 +109,7 @@ export const getWeeklyAttendanceReportService = async (weekOf, year) => {
 
     const { data: attendanceData, error: attendanceErr } = await supabase
       .from("attendance_records")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department),
-        shift:shifts(id, name, start_time, end_time, duration_hours)
-      `
-      )
+      .select(ATTENDANCE_SELECT)
       .gte("date", startDateStr)
       .lte("date", endDateStr)
       .order("date", { ascending: true });
@@ -133,7 +118,7 @@ export const getWeeklyAttendanceReportService = async (weekOf, year) => {
 
     const { data: leaveData, error: leaveErr } = await supabase
       .from("leaves")
-      .select("*")
+      .select(LEAVE_SELECT)
       .eq("status", "approved")
       .gte("end_date", startDateStr)
       .lte("start_date", endDateStr)
@@ -193,20 +178,10 @@ export const getMonthlyAttendanceReportService = async (month, year, department)
 
     let queryAttendance = supabase
       .from("attendance_records")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department),
-        shift:shifts(id, name, start_time, end_time, duration_hours)
-      `,
-        { count: "exact" }
-      )
+      .select(ATTENDANCE_SELECT, { count: "exact" })
       .gte("date", startDateStr)
       .lte("date", endDateStr);
-
-    if (department) {
-      queryAttendance = queryAttendance.filter("employee.department", "eq", department);
-    }
+    queryAttendance = applyDepartmentFilter(queryAttendance, department);
 
     const { data: attendanceData, error: attendanceErr } = await queryAttendance.order("date", {
       ascending: true,
@@ -216,19 +191,11 @@ export const getMonthlyAttendanceReportService = async (month, year, department)
 
     let queryLeaves = supabase
       .from("leaves")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department)
-      `
-      )
+      .select(LEAVE_SELECT)
       .eq("status", "approved")
       .gte("end_date", startDateStr)
       .lte("start_date", endDateStr);
-
-    if (department) {
-      queryLeaves = queryLeaves.filter("employee.department", "eq", department);
-    }
+    queryLeaves = applyDepartmentFilter(queryLeaves, department);
 
     const { data: leaveData, error: leaveErr } = await queryLeaves.order("start_date", {
       ascending: true,
@@ -238,10 +205,7 @@ export const getMonthlyAttendanceReportService = async (month, year, department)
 
     const visibleLeaveData = filterLeaveRecordsAlreadyInAttendance(attendanceData, leaveData);
 
-    const allRecords = [
-      ...attendanceData.map((r) => ({ ...r, type: "attendance" })),
-      ...visibleLeaveData.map((l) => ({ ...l, type: "leave" })),
-    ];
+    const allRecords = [...toTypedRecords(attendanceData, "attendance"), ...toTypedRecords(visibleLeaveData, "leave")];
 
     const summary = {
       total_records: allRecords.length,
@@ -263,20 +227,10 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
   try {
     let queryAttendance = supabase
       .from("attendance_records")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department),
-        shift:shifts(id, name, start_time, end_time, duration_hours)
-      `,
-        { count: "exact" }
-      )
+      .select(ATTENDANCE_SELECT, { count: "exact" })
       .gte("date", startDate)
       .lte("date", endDate);
-
-    if (teamId) {
-      queryAttendance = queryAttendance.filter("employee.department", "eq", teamId);
-    }
+    queryAttendance = applyDepartmentFilter(queryAttendance, teamId);
 
     const { data: attendanceData, error: attendanceErr } = await queryAttendance.order("employee_id", {
       ascending: true,
@@ -286,19 +240,11 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
 
     let queryLeaves = supabase
       .from("leaves")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department)
-      `
-      )
+      .select(LEAVE_SELECT)
       .eq("status", "approved")
       .gte("end_date", startDate)
       .lte("start_date", endDate);
-
-    if (teamId) {
-      queryLeaves = queryLeaves.filter("employee.department", "eq", teamId);
-    }
+    queryLeaves = applyDepartmentFilter(queryLeaves, teamId);
 
     const { data: leaveData, error: leaveErr } = await queryLeaves.order("employee_id", {
       ascending: true,
@@ -377,6 +323,72 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
         total_records: attendanceData.filter((record) => !LEAVE_STATUSES.has(record.status)).length + leaveData.length,
       },
       employee_metrics: Object.values(employeeMetrics),
+    };
+  } catch (e) {
+    if (e.status) throw e;
+    throw error(400, e.message);
+  }
+};
+
+export const getMyAttendanceReportService = async (userId, filters = {}) => {
+  try {
+    const employee = await employeeByAuth(userId);
+    const page = Number.parseInt(filters.page, 10) || 1;
+    const limit = Number.parseInt(filters.limit, 10) || 10;
+    const from = (page - 1) * limit;
+
+    let query = supabase
+      .from("attendance_records")
+      .select(ATTENDANCE_SELECT, { count: "exact" })
+      .eq("employee_id", employee.id)
+      .order("date", { ascending: false });
+
+    if (filters.date) {
+      query = query.eq("date", toDateOnly(filters.date));
+    }
+    if (filters.start_date) {
+      query = query.gte("date", toDateOnly(filters.start_date));
+    }
+    if (filters.end_date) {
+      query = query.lte("date", toDateOnly(filters.end_date));
+    }
+    if (filters.status) {
+      query = query.eq("status", filters.status);
+    }
+    if (filters.shift_id) {
+      query = query.eq("shift_id", filters.shift_id);
+    }
+
+    const { data, error: err, count } = await query.range(from, from + limit - 1);
+    if (err) throw error(400, err.message);
+
+    const records = data || [];
+    const summary = {
+      total_records: count || 0,
+      present: records.filter((r) => PRESENT_STATUSES.has(r.status)).length,
+      absent: records.filter((r) => ABSENT_STATUSES.has(r.status)).length,
+      on_leave: records.filter((r) => LEAVE_STATUSES.has(r.status)).length,
+      on_holiday: records.filter((r) => r.status === "holiday").length,
+      total_worked_hours: Math.round(records.reduce((sum, r) => sum + Number(r.duration_hours || 0), 0) * 100) / 100,
+    };
+
+    return {
+      employee,
+      filters: {
+        date: filters.date || null,
+        start_date: filters.start_date || null,
+        end_date: filters.end_date || null,
+        status: filters.status || null,
+        shift_id: filters.shift_id || null,
+      },
+      summary,
+      records,
+      pagination: {
+        page,
+        limit,
+        total: count || 0,
+        pages: Math.ceil((count || 0) / limit),
+      },
     };
   } catch (e) {
     if (e.status) throw e;

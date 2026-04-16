@@ -3,12 +3,23 @@ import { employeeByAuth, getEmployeeCurrentShiftService } from "./assignment.ser
 
 const error = (status, message) => Object.assign(new Error(message), { status });
 const todayDate = () => new Date().toISOString().split("T")[0];
+const nowIso = () => new Date().toISOString();
+const withServiceError = (err) => {
+  if (err?.status) throw err;
+  throw error(400, err.message);
+};
 
 const ATTENDANCE_STATUS = {
   PRESENT: "PRESENT",
   ABSENT: "ABSENT",
   ON_LEAVE: "ON_LEAVE",
   ON_LEAVE_WORKING: "ON_LEAVE_WORKING",
+};
+
+const PUNCH_STATUS = {
+  NOT_CHECKED_IN: "NOT_CHECKED_IN",
+  CHECKED_IN: "CHECKED_IN",
+  CHECKED_OUT: "CHECKED_OUT",
 };
 
 const LEGACY_STATUS = {
@@ -20,8 +31,16 @@ const LEGACY_STATUS = {
 
 const selectAttendanceWithShift = `
   *,
+  employee:employee_id(id, auth_id, first_name, last_name, designation, department),
   shift:shift_id(id, name, start_time, end_time, duration_hours, is_active)
 `;
+const parseDbTimestamp = (value) => {
+  if (!value) return null;
+  const raw = String(value);
+  const hasTimezone = /([zZ]|[+\-]\d{2}:\d{2})$/.test(raw);
+  const parsed = new Date(hasTimezone ? raw : `${raw}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
 const normalizeStatus = (status) => {
   if (status === LEGACY_STATUS.ONLINE || status === LEGACY_STATUS.OFFLINE) {
@@ -47,15 +66,20 @@ const buildAttendanceResponse = (record, leaveRecord = null) => {
   if (!record) return record;
 
   const normalized = normalizeStatus(record.status);
+  const hasCheckedIn = Boolean(record.check_in_time);
+  const hasCheckedOut = Boolean(record.check_out_time);
   const storedOverride = Boolean(record.leave_override);
   const onLeaveDay = Boolean(leaveRecord);
-  const isWorkingOnLeave = storedOverride || (onLeaveDay && Boolean(record.check_in_time));
-  const isPureLeaveRow = normalized === ATTENDANCE_STATUS.ON_LEAVE || record.status === LEGACY_STATUS.LEAVE;
+  const isWorkingOnLeave = (storedOverride || onLeaveDay) && hasCheckedIn && !hasCheckedOut;
+  const isPureLeaveRow = (normalized === ATTENDANCE_STATUS.ON_LEAVE || record.status === LEGACY_STATUS.LEAVE) && !hasCheckedIn;
+
+  const punchStatus = hasCheckedIn ? (hasCheckedOut ? PUNCH_STATUS.CHECKED_OUT : PUNCH_STATUS.CHECKED_IN) : PUNCH_STATUS.NOT_CHECKED_IN;
 
   return {
     ...record,
     status: isPureLeaveRow ? ATTENDANCE_STATUS.ON_LEAVE : isWorkingOnLeave ? ATTENDANCE_STATUS.ON_LEAVE_WORKING : normalized,
-    leave_override: isWorkingOnLeave,
+    leave_override: Boolean(storedOverride || isWorkingOnLeave),
+    punch_status: punchStatus,
     leave_id: leaveRecord?.id || null,
     leave_type: leaveRecord?.leave_type || null,
   };
@@ -144,18 +168,14 @@ const requireActiveShift = (shift) => {
     throw error(400, "Shift is inactive for today");
   }
 };
-
-const isReusablePlaceholderRecord = (record) => {
-  if (!record) return false;
-
-  const duration = Number(record.duration_hours || 0);
-  const hasNoNotes = !record.notes || !String(record.notes).trim();
-
-  return Boolean(record.check_in_time) && Boolean(record.check_out_time) && duration === 0 && hasNoNotes;
+const requireShiftOrLeave = (assignment, leaveRecord) => {
+  if (!assignment && !leaveRecord) {
+    throw error(400, "No shift assigned for today");
+  }
 };
 
-const reopenCompletedSameDayRecord = async (record, employeeId, today, assignment, payload, leaveRecord) => {
-  const checkInTime = new Date().toISOString();
+const reopenCompletedSameDayRecord = async (record, assignment, payload, leaveRecord) => {
+  const checkInTime = nowIso();
 
   const { data, error: updateErr } = await supabase
     .from("attendance_records")
@@ -180,7 +200,7 @@ const reopenCompletedSameDayRecord = async (record, employeeId, today, assignmen
 
 const ensureLeaveAttendanceRow = async (employeeId, date, leaveRecord) => {
   const existing = await getAttendanceForDate(employeeId, date);
-  const now = new Date().toISOString();
+  const now = nowIso();
 
   if (existing) {
     if (existing.check_in_time) {
@@ -240,32 +260,18 @@ export const checkInService = async (userId, payload) => {
     }
 
     if (existingToday?.check_in_time && existingToday.check_out_time) {
-      if (isReusablePlaceholderRecord(existingToday)) {
-        const assignment = await getCurrentShift(employee.id, today);
-        if (!assignment && !leaveRecord) {
-          throw error(400, "No shift assigned for today");
-        }
-        requireActiveShift(assignment?.shift);
-
-        return reopenCompletedSameDayRecord(existingToday, employee.id, today, assignment, payload, leaveRecord);
-      }
-
       const assignment = await getCurrentShift(employee.id, today);
-      if (!assignment && !leaveRecord) {
-        throw error(400, "No shift assigned for today");
-      }
+      requireShiftOrLeave(assignment, leaveRecord);
       requireActiveShift(assignment?.shift);
 
-      return reopenCompletedSameDayRecord(existingToday, employee.id, today, assignment, payload, leaveRecord);
+      return reopenCompletedSameDayRecord(existingToday, assignment, payload, leaveRecord);
     }
 
     const assignment = await getCurrentShift(employee.id, today);
-    if (!assignment && !leaveRecord) {
-      throw error(400, "No shift assigned for today");
-    }
+    requireShiftOrLeave(assignment, leaveRecord);
     requireActiveShift(assignment?.shift);
 
-    const checkInTime = new Date().toISOString();
+    const checkInTime = nowIso();
     const basePayload = {
       check_in_time: checkInTime,
       check_out_time: null,
@@ -315,8 +321,7 @@ export const checkInService = async (userId, payload) => {
 
     return buildAttendanceResponse(saved, leaveRecord);
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };
 
@@ -334,13 +339,13 @@ export const checkOutService = async (userId, payload) => {
       throw error(404, "No active check-in record found");
     }
 
-    const checkInTime = new Date(openRecord.check_in_time);
-    if (Number.isNaN(checkInTime.getTime())) {
+    const checkInTime = parseDbTimestamp(openRecord.check_in_time);
+    if (!checkInTime) {
       throw error(400, "Invalid attendance record: malformed check-in time");
     }
 
     const checkOutTime = new Date();
-    const durationMinutes = Math.max(0, Math.floor((checkOutTime - checkInTime) / (1000 * 60)));
+    const durationMinutes = Math.max(0, Math.floor((checkOutTime.getTime() - checkInTime.getTime()) / (1000 * 60)));
     const durationHours = Math.round((durationMinutes / 60) * 100) / 100;
     const leaveRecord = await checkLeaveConflict(employee.id, openRecord.date);
 
@@ -361,8 +366,7 @@ export const checkOutService = async (userId, payload) => {
     if (err) throw error(400, err.message);
     return buildAttendanceResponse(data, leaveRecord);
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };
 
@@ -390,11 +394,11 @@ export const getCurrentStatusService = async (userId) => {
     return {
       status: ATTENDANCE_STATUS.ABSENT,
       leave_override: false,
+      punch_status: PUNCH_STATUS.NOT_CHECKED_IN,
       check_in_time: null,
       check_out_time: null,
     };
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };

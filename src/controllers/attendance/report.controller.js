@@ -1,5 +1,6 @@
 import {
   getDailyAttendanceReportService,
+  getMyAttendanceReportService,
   getWeeklyAttendanceReportService,
   getMonthlyAttendanceReportService,
   getTeamSummaryReportService,
@@ -79,6 +80,26 @@ export const getTeamSummaryReport = async (req, res, next) => {
       team_id
     );
     send(res, 200, "Team summary report retrieved successfully", data);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getMyAttendanceReport = async (req, res, next) => {
+  try {
+    const data = await getMyAttendanceReportService(req.user.id, req.query);
+    send(
+      res,
+      200,
+      "My attendance report retrieved successfully",
+      {
+        employee: data.employee,
+        filters: data.filters,
+        summary: data.summary,
+        records: data.records,
+      },
+      data.pagination
+    );
   } catch (err) {
     next(err);
   }

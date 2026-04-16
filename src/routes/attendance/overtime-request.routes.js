@@ -4,6 +4,7 @@ import { validateBody, validateParams, validateQuery } from "../../middleware/va
 import {
   createOvertimeRequest,
   getOvertimeRequests,
+  getMyOvertimeRequests,
   getOvertimeRequestById,
   approveOvertimeRequest,
   rejectOvertimeRequest,
@@ -16,11 +17,13 @@ import {
 
 const router = Router();
 const adminHr = authorize("admin", "hr");
-
+const adminHrManager = authorize("admin", "hr", "manager");
 router.post("/attendance/overtime-requests", validateBody(createOvertimeRequestSchema), createOvertimeRequest);
-router.get("/attendance/overtime-requests", validateQuery(overtimeRequestQuerySchema), getOvertimeRequests);
+router.get("/attendance/overtime-requests", adminHrManager, validateQuery(overtimeRequestQuerySchema), getOvertimeRequests);
+router.get("/attendance/overtime-requests/me", getMyOvertimeRequests);
 router.get(
   "/attendance/overtime-requests/:id",
+  adminHrManager,
   validateParams(overtimeRequestIdParamSchema),
   getOvertimeRequestById
 );

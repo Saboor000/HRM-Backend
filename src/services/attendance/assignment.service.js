@@ -2,6 +2,23 @@ import { supabase } from "../../config/supabase.js";
 import { getShiftByIdService } from "./shift.service.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
+const nowIso = () => new Date().toISOString();
+
+const ASSIGNMENT_SELECT = `
+  *,
+  employee:employee_id(id, first_name, last_name),
+  shift:shift_id(id, name, start_time, end_time, duration_hours)
+`;
+const ASSIGNMENT_SELECT_WITH_DETAILS = `
+  *,
+  employee:employee_id(id, first_name, last_name, designation, auth_id),
+  shift:shift_id(id, name, start_time, end_time, duration_hours, is_active)
+`;
+const sanitizeAssignment = ({ employee_id, shift_id, ...assignment }) => assignment;
+const withServiceError = (err) => {
+  if (err?.status) throw err;
+  throw error(400, err.message);
+};
 
 export const employeeByAuth = async (authId, optional = false) => {
   if (!authId) {
@@ -73,19 +90,13 @@ export const assignShiftService = async (payload, userId) => {
         is_active: payload.is_active !== false,
         updated_by: employee.id,
       })
-      .select(`
-        *,
-        employee:employee_id(id, first_name, last_name, designation, auth_id),
-        shift:shift_id(id, name, start_time, end_time, duration_hours, is_active)
-      `)
+      .select(ASSIGNMENT_SELECT_WITH_DETAILS)
       .single();
 
     if (err) throw error(400, err.message);
-    const { employee_id, shift_id, ...assignment } = data;
-    return assignment;
+    return sanitizeAssignment(data);
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };
 
@@ -97,22 +108,12 @@ export const getAssignmentsService = async (query = {}) => {
 
     let q = supabase
       .from("employee_shift_assignments")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        shift:shift_id(id, name, start_time, end_time, duration_hours)
-      `,
-        { count: "exact" }
-      )
+      .select(ASSIGNMENT_SELECT, { count: "exact" })
       .order("assigned_from", { ascending: false });
 
-    if (employee_id) {
-      q = q.eq("employee_id", employee_id);
-    }
-
-    if (shift_id) {
-      q = q.eq("shift_id", shift_id);
+    const exactFilters = { employee_id, shift_id };
+    for (const [key, value] of Object.entries(exactFilters)) {
+      if (value) q = q.eq(key, value);
     }
 
     if (is_active !== undefined) {
@@ -123,7 +124,7 @@ export const getAssignmentsService = async (query = {}) => {
 
     if (err) throw error(400, err.message);
 
-    const items = (data || []).map(({ employee_id: _employeeId, shift_id: _shiftId, ...assignment }) => assignment);
+    const items = (data || []).map(sanitizeAssignment);
 
     return {
       data: items,
@@ -135,8 +136,7 @@ export const getAssignmentsService = async (query = {}) => {
       },
     };
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };
 
@@ -144,13 +144,7 @@ export const getAssignmentByIdService = async (id) => {
   try {
     const { data, error: err } = await supabase
       .from("employee_shift_assignments")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        shift:shift_id(id, name, start_time, end_time, duration_hours)
-      `
-      )
+      .select(ASSIGNMENT_SELECT)
       .eq("id", id)
       .single();
 
@@ -159,11 +153,9 @@ export const getAssignmentByIdService = async (id) => {
     }
     if (err) throw error(400, err.message);
 
-    const { employee_id, shift_id, ...assignment } = data;
-    return assignment;
+    return sanitizeAssignment(data);
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };
 
@@ -185,27 +177,19 @@ export const updateAssignmentService = async (id, payload, userId) => {
       updateData.is_active = payload.is_active;
     }
     updateData.updated_by = employee.id;
-    updateData.updated_at = new Date().toISOString();
+    updateData.updated_at = nowIso();
 
     const { data, error: err } = await supabase
       .from("employee_shift_assignments")
       .update(updateData)
       .eq("id", id)
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name),
-        shift:shift_id(id, name, start_time, end_time, duration_hours)
-      `
-      )
+      .select(ASSIGNMENT_SELECT)
       .single();
 
     if (err) throw error(400, err.message);
-    const { employee_id, shift_id, ...assignment } = data;
-    return assignment;
+    return sanitizeAssignment(data);
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };
 
@@ -229,7 +213,6 @@ export const getEmployeeCurrentShiftService = async (employeeId, date) => {
 
     return data;
   } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
+    withServiceError(e);
   }
 };

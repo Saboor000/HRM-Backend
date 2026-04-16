@@ -1,61 +1,58 @@
 import Joi from "joi";
+import { emailRule, isoDateRule, limitRule, pageRule, passwordRule, sortOrderRule, strictObject, uuidRule } from "./common.validator.js";
 
-const designationSchema = Joi.string().trim().valid("admin", "employee", "hr", "manager");
-const uuid = Joi.string().guid({ version: ["uuidv4", "uuidv5"] });
-const passwordRule = Joi.string().min(8).max(64);
-const isoDate = Joi.date().iso();
+const designationRule = Joi.string().trim().valid("admin", "employee", "hr", "manager");
+const genderRule = Joi.string().trim().valid("male", "female", "other");
+const employmentTypeRule = Joi.string().trim().valid("full_time", "part_time", "contract", "intern");
 
-export const createEmployeeSchema = Joi.object({
-  email: Joi.string().trim().email().required(),
+export const createEmployeeSchema = strictObject({
+  email: emailRule.required(),
   password: passwordRule.required(),
-  designation: designationSchema.default("employee"),
+  designation: designationRule.default("employee"),
   firstName: Joi.string().trim().required(),
   lastName: Joi.string().trim().required(),
-  dob: isoDate.required(),
-  gender: Joi.string().trim().valid("male", "female", "other").required(),
+  dob: isoDateRule.required(),
+  gender: genderRule.required(),
   phone: Joi.string().trim().required(),
   address: Joi.string().trim().required(),
   employeeId: Joi.string().trim().required(),
   department: Joi.string().trim().required(),
-  joiningDate: isoDate.required(),
-  employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern").required(),
+  joiningDate: isoDateRule.required(),
+  employmentType: employmentTypeRule.required(),
   emergencyName: Joi.string().trim().required(),
   emergencyPhone: Joi.string().trim().required(),
-}).options({ allowUnknown: false });
+});
 
-export const updateEmployeeSchema = Joi.object({
+export const updateEmployeeSchema = strictObject({
   firstName: Joi.string().trim(),
   lastName: Joi.string().trim(),
-  dob: isoDate,
-  gender: Joi.string().trim().valid("male", "female", "other"),
+  dob: isoDateRule,
+  gender: genderRule,
   phone: Joi.string().trim(),
   address: Joi.string().trim(),
   department: Joi.string().trim(),
-  joiningDate: isoDate,
-  employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern"),
+  joiningDate: isoDateRule,
+  employmentType: employmentTypeRule,
   emergencyName: Joi.string().trim(),
   emergencyPhone: Joi.string().trim(),
-  designation: designationSchema,
+  designation: designationRule,
   is_active: Joi.boolean(),
 })
-  .min(1)
-  .options({ allowUnknown: false });
+  .min(1);
 
-export const employeeIdParamSchema = Joi.object({
-  id: uuid.required(),
-}).options({ allowUnknown: false });
+export const employeeIdParamSchema = strictObject({ id: uuidRule.required() });
 
-export const employeeListQuerySchema = Joi.object({
-  page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(10),
+export const employeeListQuerySchema = strictObject({
+  page: pageRule,
+  limit: limitRule,
   search: Joi.string().trim().max(100).allow(""),
-  role: Joi.string().trim().valid("admin", "employee", "hr", "manager"),
+  role: designationRule,
   department: Joi.string().trim().max(60),
-  employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern"),
-  gender: Joi.string().trim().valid("male", "female", "other"),
+  employmentType: employmentTypeRule,
+  gender: genderRule,
   sortBy: Joi.string()
     .trim()
     .valid("created_at", "joining_date", "first_name", "last_name", "department", "designation")
     .default("created_at"),
-  sortOrder: Joi.string().trim().valid("asc", "desc").default("desc"),
-}).options({ allowUnknown: false });
+  sortOrder: sortOrderRule,
+});
