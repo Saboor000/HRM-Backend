@@ -1,9 +1,13 @@
 import { Router } from "express";
 import { authorize } from "../../middleware/auth.middleware.js";
-import { validateBody, validateParams } from "../../middleware/validateRequest.middleware.js";
+import {
+  validateBody,
+  validateParams,
+} from "../../middleware/validateRequest.middleware.js";
 import {
   createShift,
   getShifts,
+  getMyShifts,
   getShiftById,
   updateShift,
   toggleShiftStatus,
@@ -18,24 +22,41 @@ import {
 
 const router = Router();
 const adminHr = authorize("admin", "hr");
+const adminHrManager = authorize("admin", "hr", "manager");
 
-router.post("/attendance/shifts", adminHr, validateBody(createShiftSchema), createShift);
-router.get("/attendance/shifts", getShifts);
-router.get("/attendance/shifts/:id", validateParams(shiftIdParamSchema), getShiftById);
+router.post(
+  "/attendance/shifts",
+  adminHr,
+  validateBody(createShiftSchema),
+  createShift,
+);
+router.get("/attendance/shifts", adminHrManager, getShifts);
+router.get("/attendance/shifts/me", getMyShifts);
+router.get(
+  "/attendance/shifts/:id",
+  adminHrManager,
+  validateParams(shiftIdParamSchema),
+  getShiftById,
+);
 router.put(
   "/attendance/shifts/:id",
   adminHr,
   validateParams(shiftIdParamSchema),
   validateBody(updateShiftSchema),
-  updateShift
+  updateShift,
 );
 router.patch(
   "/attendance/shifts/:id/status",
   adminHr,
   validateParams(shiftIdParamSchema),
   validateBody(shiftStatusSchema),
-  toggleShiftStatus
+  toggleShiftStatus,
 );
-router.delete("/attendance/shifts/:id", adminHr, validateParams(shiftIdParamSchema), deleteShift);
+router.delete(
+  "/attendance/shifts/:id",
+  adminHr,
+  validateParams(shiftIdParamSchema),
+  deleteShift,
+);
 
 export default router;

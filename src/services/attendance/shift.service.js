@@ -1,6 +1,7 @@
 import { supabase } from "../../config/supabase.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
+const nowIso = () => new Date().toISOString();
 
 export const validateShiftTiming = (startTime, endTime) => {
   const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -147,7 +148,7 @@ export const updateShiftService = async (id, payload) => {
     if (payload.end_time !== undefined) updateData.end_time = payload.end_time;
     if (payload.duration_hours !== undefined) updateData.duration_hours = payload.duration_hours;
     if (payload.is_active !== undefined) updateData.is_active = payload.is_active;
-    updateData.updated_at = new Date().toISOString();
+    updateData.updated_at = nowIso();
 
     const { data, error: err } = await supabase
       .from("shifts")
@@ -172,7 +173,7 @@ export const toggleShiftStatusService = async (id, isActive) => {
       .from("shifts")
       .update({
         is_active: isActive,
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso(),
       })
       .eq("id", id)
       .select("*")
@@ -213,7 +214,7 @@ export const deleteShiftService = async (id) => {
           .from("shifts")
           .update({
             is_active: false,
-            updated_at: new Date().toISOString(),
+            updated_at: nowIso(),
           })
           .eq("id", id)
           .select("*")

@@ -12,29 +12,29 @@ const send = (res, status, message, data, pagination) =>
     ...(pagination ? { pagination } : {}),
   });
 
-export const checkIn = async (req, res, next) => {
+const runAndSend = (service, successStatus, successMessage) => async (req, res, next) => {
   try {
-    const data = await checkInService(req.user.id, req.body);
-    send(res, 201, "Checked in successfully", data);
+    const data = await service(req);
+    send(res, successStatus, successMessage, data);
   } catch (err) {
     next(err);
   }
 };
 
-export const checkOut = async (req, res, next) => {
-  try {
-    const data = await checkOutService(req.user.id, req.body);
-    send(res, 200, "Checked out successfully", data);
-  } catch (err) {
-    next(err);
-  }
-};
+export const checkIn = runAndSend(
+  (req) => checkInService(req.user.id, req.body),
+  201,
+  "Checked in successfully"
+);
 
-export const getCurrentStatus = async (req, res, next) => {
-  try {
-    const data = await getCurrentStatusService(req.user.id);
-    send(res, 200, "Current status retrieved successfully", data);
-  } catch (err) {
-    next(err);
-  }
-};
+export const checkOut = runAndSend(
+  (req) => checkOutService(req.user.id, req.body),
+  200,
+  "Checked out successfully"
+);
+
+export const getCurrentStatus = runAndSend(
+  (req) => getCurrentStatusService(req.user.id),
+  200,
+  "Current status retrieved successfully"
+);

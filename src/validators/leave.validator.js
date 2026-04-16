@@ -1,88 +1,158 @@
 import Joi from "joi";
+import {
+  hasInvalidTimeRange,
+  isEndDateBeforeStart,
+  isoDateRule,
+  limitRule,
+  pageRule,
+  sortOrderRule,
+  strictObject,
+  timeHHmmRule,
+  uuidRule,
+} from "./common.validator.js";
 
 const leaveTypes = ["full_day", "half_day", "short_leave"];
 const leaveStatuses = ["pending", "approved", "rejected", "cancelled"];
-const uuid = Joi.string().guid({ version: ["uuidv4", "uuidv5"] });
-const isoDate = Joi.date().iso();
+const singleDayTypes = new Set(["half_day", "short_leave"]);
 
-const hhmmRule = Joi.string().pattern(/^([01]\d|2[0-3]):([0-5]\d)$/);
-const isEndBeforeStart = (start, end) => new Date(end) < new Date(start);
+const normalizeSingleDayFields = (value) => {
+  const normalizedLeaveDate = value.leave_date || value.start_date;
+  if (!singleDayTypes.has(value.leave_type) || !normalizedLeaveDate) return;
 
-export const leaveIdParamSchema = Joi.object({
-  id: uuid.required(),
-}).options({ allowUnknown: false });
+  value.leave_date = normalizedLeaveDate;
+  value.start_date = normalizedLeaveDate;
+  value.end_date = normalizedLeaveDate;
+};
 
-export const createLeaveSchema = Joi.object({
+const normalizeFullDayFields = (value) => {
+  if (value.leave_type !== "full_day") return;
+
+  if (value.leave_date) {
+    value.start_date = value.start_date || value.leave_date;
+    value.end_date = value.end_date || value.leave_date;
+  }
+
+  if (value.start_date === value.end_date) {
+    value.leave_date = value.start_date;
+  } else {
+    delete value.leave_date;
+  }
+};
+
+const cleanupTypeSpecificFields = (value) => {
+  if (value.leave_type !== "half_day") {
+    delete value.half_day_type;
+  }
+
+  if (value.leave_type !== "short_leave") {
+    delete value.start_time;
+    delete value.end_time;
+  }
+
+  if (value.leave_type !== "full_day") {
+    delete value.end_date;
+  }
+
+  if (singleDayTypes.has(value.leave_type)) {
+    value.end_date = value.start_date;
+  }
+};
+
+export const leaveIdParamSchema = strictObject({ id: uuidRule.required() });
+
+export const createLeaveSchema = strictObject({
   leave_type: Joi.string().valid(...leaveTypes).required(),
 
-  start_date: Joi.when("leave_type", {
-    is: Joi.valid("full_day", "half_day"),
-    then: isoDate.required(),
-    otherwise: Joi.any().strip(),
-  }),
-
-  end_date: Joi.when("leave_type", {
-    is: "full_day",
-    then: isoDate.required(),
-    otherwise: Joi.any().strip(),
-  }),
-
-  half_day_type: Joi.when("leave_type", {
-    is: "half_day",
-    then: Joi.string().valid("morning", "evening").required(),
-    otherwise: Joi.any().strip(),
-  }),
-
-  start_time: Joi.when("leave_type", {
-    is: "short_leave",
-    then: hhmmRule.required(),
-    otherwise: Joi.any().strip(),
-  }),
-
-  end_time: Joi.when("leave_type", {
-    is: "short_leave",
-    then: hhmmRule.required(),
-    otherwise: Joi.any().strip(),
-  }),
-
+  leave_date: isoDateRule,
+  start_date: isoDateRule,
+  end_date: isoDateRule,
+  half_day_type: Joi.string().valid("morning", "evening"),
+  start_time: timeHHmmRule,
+  end_time: timeHHmmRule,
   reason: Joi.string().trim().max(500).allow(""),
 })
   .custom((value, helpers) => {
-    if (value.leave_type === "full_day" && isEndBeforeStart(value.start_date, value.end_date)) {
-      return helpers.error("any.invalid", {
-        message: "end_date must be greater than or equal to start_date",
-      });
+    if (value.leave_type === "full_day") {
+      const start = value.start_date || value.leave_date;
+      const end = value.end_date || value.leave_date;
+
+      if (!start || !end) {
+        return helpers.message("full_day requires leave_date or start_date and end_date");
+      }
+
+      if (isEndDateBeforeStart(start, end)) {
+        return helpers.message("end_date must be greater than or equal to start_date");
+      }
+    }
+
+    if (value.leave_type === "half_day") {
+      if (!value.leave_date && !value.start_date) {
+        return helpers.message("half_day requires leave_date");
+      }
+
+      if (!value.half_day_type) {
+        return helpers.message("half_day_type is required for half_day leave");
+      }
+    }
+
+    if (value.leave_type === "short_leave") {
+      if (!value.leave_date && !value.start_date) {
+        return helpers.message("short_leave requires leave_date");
+      }
+
+      if (!value.start_time || !value.end_time) {
+        return helpers.message("start_time and end_time are required for short_leave");
+      }
+
+      if (hasInvalidTimeRange(value.start_time, value.end_time)) {
+        return helpers.message("End time must be greater than start time");
+      }
+    }
+
+    normalizeSingleDayFields(value);
+    normalizeFullDayFields(value);
+    cleanupTypeSpecificFields(value);
+
+    if (value.leave_type === "full_day" && !value.start_date) {
+      return helpers.message("start_date is required for full_day leave");
     }
 
     return value;
-  })
-  .options({ allowUnknown: false });
+  });
 
-export const rejectLeaveSchema = Joi.object({
+export const rejectLeaveSchema = strictObject({
   rejection_reason: Joi.string().trim().required(),
-}).options({ allowUnknown: false });
+});
 
-export const cancelLeaveSchema = Joi.object({
+export const leaveDecisionSchema = strictObject({
+  action: Joi.string().valid("approved", "rejected").required(),
+  rejection_reason: Joi.when("action", {
+    is: "rejected",
+    then: Joi.string().trim().required(),
+    otherwise: Joi.string().trim().allow("", null).optional(),
+  }),
+});
+
+export const cancelLeaveSchema = strictObject({
   cancel_reason: Joi.string().trim().max(500).allow(""),
-}).options({ allowUnknown: false });
+});
 
-export const leaveListQuerySchema = Joi.object({
-  page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(10),
+export const leaveListQuerySchema = strictObject({
+  page: pageRule,
+  limit: limitRule,
   status: Joi.string().valid(...leaveStatuses),
+  manager_status: Joi.string().valid("pending", "approved", "rejected"),
+  hr_status: Joi.string().valid("pending", "approved", "rejected"),
   leave_type: Joi.string().valid(...leaveTypes),
-  employee_id: uuid,
+  employee_id: uuidRule,
   start_date: Joi.string().isoDate(),
   end_date: Joi.string().isoDate(),
-  sortOrder: Joi.string().valid("asc", "desc").default("desc"),
+  sortOrder: sortOrderRule,
 })
   .custom((value, helpers) => {
-    if (value.start_date && value.end_date && isEndBeforeStart(value.start_date, value.end_date)) {
-      return helpers.error("any.invalid", {
-        message: "end_date must be greater than or equal to start_date",
-      });
+    if (value.start_date && value.end_date && isEndDateBeforeStart(value.start_date, value.end_date)) {
+      return helpers.message("end_date must be greater than or equal to start_date");
     }
 
     return value;
-  })
-  .options({ allowUnknown: false });
+  });

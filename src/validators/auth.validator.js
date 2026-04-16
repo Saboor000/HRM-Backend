@@ -1,31 +1,26 @@
 import Joi from "joi";
+import { emailRule, passwordRule, strictObject, uuidRule } from "./common.validator.js";
 
-const uuid = Joi.string().guid({ version: ["uuidv4", "uuidv5"] });
-const email = Joi.string().trim().email();
-const password = Joi.string().min(8).max(64);
-const role = Joi.string().trim().valid("employee", "hr", "manager");
+const roleRule = Joi.string().trim().valid("employee", "hr", "manager");
 
-export const signinSchema = Joi.object({
-  email: email.required(),
+export const signinSchema = strictObject({
+  email: emailRule.required(),
   password: Joi.string().required(),
-}).options({ allowUnknown: false });
+});
 
-export const adminCreateUserSchema = Joi.object({
-  email: email.required(),
-  password: password.required(),
+export const adminCreateUserSchema = strictObject({
+  email: emailRule.required(),
+  password: passwordRule.required(),
   name: Joi.string().trim().required(),
-  role: role.default("employee"),
-}).options({ allowUnknown: false });
+  role: roleRule.default("employee"),
+});
 
-export const userIdParamSchema = Joi.object({
-  id: uuid.required(),
-}).options({ allowUnknown: false });
+export const userIdParamSchema = strictObject({ id: uuidRule.required() });
 
-export const adminUpdateUserSchema = Joi.object({
-  email,
-  password,
+export const adminUpdateUserSchema = strictObject({
+  email: emailRule,
+  password: passwordRule,
   name: Joi.string().trim(),
-  role,
+  role: roleRule,
 })
-  .min(1)
-  .options({ allowUnknown: false });
+  .min(1);

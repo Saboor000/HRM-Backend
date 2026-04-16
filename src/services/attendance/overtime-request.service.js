@@ -2,6 +2,14 @@ import { supabase } from "../../config/supabase.js";
 import { employeeByAuth } from "./assignment.service.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
+const OVERTIME_SELECT = `
+  *,
+  employee:employee_id(id, first_name, last_name, designation, department)
+`;
+const OVERTIME_APPROVAL_SELECT = `
+  *,
+  employee:employee_id(id, first_name, last_name)
+`;
 const toPagination = (page, limit, count) => ({
   page,
   limit,
@@ -14,6 +22,21 @@ const ensurePendingStatus = (entity, action) => {
   if (entity.status !== "pending") {
     throw error(400, `Cannot ${action} a ${entity.status} request`);
   }
+};
+const updateOvertimeRequestStatus = async (id, approverId, status) => {
+  const { data, error: err } = await supabase
+    .from("overtime_requests")
+    .update({
+      status,
+      approved_by: approverId,
+      approved_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select(OVERTIME_APPROVAL_SELECT)
+    .single();
+
+  if (err) throw error(400, err.message);
+  return data;
 };
 
 export const createOvertimeRequestService = async (userId, payload) => {
@@ -46,12 +69,7 @@ export const createOvertimeRequestService = async (userId, payload) => {
         status: "pending",
         requested_at: new Date().toISOString(),
       })
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department)
-      `
-      )
+      .select(OVERTIME_SELECT)
       .single();
 
     if (err) throw error(400, err.message);
@@ -70,24 +88,7 @@ export const approveOvertimeRequestService = async (id, userId) => {
 
     ensurePendingStatus(overtimeReq, "approve");
 
-    const { data, error: err } = await supabase
-      .from("overtime_requests")
-      .update({
-        status: "approved",
-        approved_by: approver.id,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name)
-      `
-      )
-      .single();
-
-    if (err) throw error(400, err.message);
-    return data;
+    return updateOvertimeRequestStatus(id, approver.id, "approved");
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);
@@ -102,24 +103,7 @@ export const rejectOvertimeRequestService = async (id, userId) => {
 
     ensurePendingStatus(overtimeReq, "reject");
 
-    const { data, error: err } = await supabase
-      .from("overtime_requests")
-      .update({
-        status: "rejected",
-        approved_by: approver.id,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name)
-      `
-      )
-      .single();
-
-    if (err) throw error(400, err.message);
-    return data;
+    return updateOvertimeRequestStatus(id, approver.id, "rejected");
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);
@@ -130,13 +114,7 @@ export const getOvertimeRequestsService = async (filters, page, limit) => {
   try {
     let query = supabase
       .from("overtime_requests")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department)
-      `,
-        { count: "exact" }
-      );
+      .select(OVERTIME_SELECT, { count: "exact" });
 
     query = applyExactFilters(query, filters, ["employee_id", "status"]);
 
@@ -160,12 +138,7 @@ export const getOvertimeRequestByIdService = async (id) => {
   try {
     const { data, error: err } = await supabase
       .from("overtime_requests")
-      .select(
-        `
-        *,
-        employee:employee_id(id, first_name, last_name, designation, department)
-      `
-      )
+      .select(OVERTIME_SELECT)
       .eq("id", id)
       .single();
 
