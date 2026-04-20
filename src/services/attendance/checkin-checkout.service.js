@@ -1,8 +1,18 @@
 import { supabase } from "../../config/supabase.js";
 import { employeeByAuth, getEmployeeCurrentShiftService } from "./assignment.service.js";
+import {
+  formatTimestampInTimezone,
+  getDateInTimezone,
+  resolveTimezone,
+} from "../../utils/timezone.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
-const todayDate = () => new Date().toISOString().split("T")[0];
+const ATTENDANCE_TIMEZONE = resolveTimezone(
+  process.env.ATTENDANCE_TIMEZONE,
+  process.env.PAYROLL_POLICY_TIMEZONE,
+  "Asia/Karachi"
+);
+const todayDate = () => getDateInTimezone(ATTENDANCE_TIMEZONE);
 const nowIso = () => new Date().toISOString();
 const withServiceError = (err) => {
   if (err?.status) throw err;
@@ -80,6 +90,9 @@ const buildAttendanceResponse = (record, leaveRecord = null) => {
     status: isPureLeaveRow ? ATTENDANCE_STATUS.ON_LEAVE : isWorkingOnLeave ? ATTENDANCE_STATUS.ON_LEAVE_WORKING : normalized,
     leave_override: Boolean(storedOverride || isWorkingOnLeave),
     punch_status: punchStatus,
+    attendance_timezone: ATTENDANCE_TIMEZONE,
+    check_in_time_local: formatTimestampInTimezone(record.check_in_time, ATTENDANCE_TIMEZONE),
+    check_out_time_local: formatTimestampInTimezone(record.check_out_time, ATTENDANCE_TIMEZONE),
     leave_id: leaveRecord?.id || null,
     leave_type: leaveRecord?.leave_type || null,
   };

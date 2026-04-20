@@ -14,6 +14,7 @@ import {
 const leaveTypes = ["full_day", "half_day", "short_leave"];
 const leaveStatuses = ["pending", "approved", "rejected", "cancelled"];
 const singleDayTypes = new Set(["half_day", "short_leave"]);
+const hasLeaveDate = (value) => Boolean(value.leave_date || value.start_date);
 
 const normalizeSingleDayFields = (value) => {
   const normalizedLeaveDate = value.leave_date || value.start_date;
@@ -86,7 +87,7 @@ export const createLeaveSchema = strictObject({
     }
 
     if (value.leave_type === "half_day") {
-      if (!value.leave_date && !value.start_date) {
+      if (!hasLeaveDate(value)) {
         return helpers.message("half_day requires leave_date");
       }
 
@@ -96,7 +97,7 @@ export const createLeaveSchema = strictObject({
     }
 
     if (value.leave_type === "short_leave") {
-      if (!value.leave_date && !value.start_date) {
+      if (!hasLeaveDate(value)) {
         return helpers.message("short_leave requires leave_date");
       }
 

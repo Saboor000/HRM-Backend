@@ -15,6 +15,12 @@ const ASSIGNMENT_SELECT_WITH_DETAILS = `
   shift:shift_id(id, name, start_time, end_time, duration_hours, is_active)
 `;
 const sanitizeAssignment = ({ employee_id, shift_id, ...assignment }) => assignment;
+const toPagination = (page, limit, count) => ({
+  page,
+  limit,
+  total: count || 0,
+  pages: Math.ceil((count || 0) / limit),
+});
 const withServiceError = (err) => {
   if (err?.status) throw err;
   throw error(400, err.message);
@@ -34,6 +40,46 @@ export const employeeByAuth = async (authId, optional = false) => {
   if (err) throw error(400, err.message);
   if (!data && !optional) throw error(404, "Employee not found");
   return data;
+};
+
+const getAssignmentByIdRecord = async (id) => {
+  const { data, error: err } = await supabase
+    .from("employee_shift_assignments")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (err && err.code === "PGRST116") {
+    throw error(404, "Assignment not found");
+  }
+  if (err) throw error(400, err.message);
+
+  return data;
+};
+
+const assertNoConflictingAssignment = async ({
+  employeeId,
+  excludeAssignmentId,
+}) => {
+  const { data, error: err } = await supabase
+    .from("employee_shift_assignments")
+    .select("id, assigned_from, assigned_to, is_active")
+    .eq("employee_id", employeeId)
+    .eq("is_active", true);
+
+  if (err) throw error(400, err.message);
+
+  const conflict = (data || []).find((assignment) => {
+    if (excludeAssignmentId && assignment.id === excludeAssignmentId) return false;
+    return true;
+  });
+
+  if (conflict) {
+    throw error(
+      409,
+      "Employee already has an active shift assignment. Deactivate the current assignment before creating a new one."
+    );
+  }
 };
 
 const resolveEmployeeId = async (employeeIdentifier) => {
@@ -69,15 +115,10 @@ export const assignShiftService = async (payload, userId) => {
 
     await getShiftByIdService(payload.shift_id);
 
-    const { error: checkErr } = await supabase
-      .from("employee_shift_assignments")
-      .select("id")
-      .eq("employee_id", targetEmployeeId)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (checkErr && checkErr.code !== "PGRST116") {
-      throw error(400, checkErr.message);
+    if (payload.is_active !== false) {
+      await assertNoConflictingAssignment({
+        employeeId: targetEmployeeId,
+      });
     }
 
     const { data, error: err } = await supabase
@@ -128,12 +169,7 @@ export const getAssignmentsService = async (query = {}) => {
 
     return {
       data: items,
-      pagination: {
-        page,
-        limit,
-        total: count || 0,
-        pages: Math.ceil((count || 0) / limit),
-      },
+      pagination: toPagination(page, limit, count),
     };
   } catch (e) {
     withServiceError(e);
@@ -161,9 +197,11 @@ export const getAssignmentByIdService = async (id) => {
 
 export const updateAssignmentService = async (id, payload, userId) => {
   try {
-    await getAssignmentByIdService(id);
+    const existing = await getAssignmentByIdRecord(id);
 
     const employee = await employeeByAuth(userId);
+
+    const nextIsActive = payload.is_active !== undefined ? payload.is_active : existing.is_active;
 
     const updateData = {};
     if (payload.shift_id !== undefined) {
@@ -176,6 +214,14 @@ export const updateAssignmentService = async (id, payload, userId) => {
     if (payload.is_active !== undefined) {
       updateData.is_active = payload.is_active;
     }
+
+    if (nextIsActive) {
+      await assertNoConflictingAssignment({
+        employeeId: existing.employee_id,
+        excludeAssignmentId: id,
+      });
+    }
+
     updateData.updated_by = employee.id;
     updateData.updated_at = nowIso();
 
@@ -207,11 +253,16 @@ export const getEmployeeCurrentShiftService = async (employeeId, date) => {
       .eq("is_active", true)
       .lte("assigned_from", date)
       .or(`assigned_to.is.null,assigned_to.gte.${date}`)
-      .maybeSingle();
+      .order("assigned_from", { ascending: false })
+      .limit(2);
 
     if (err) throw error(400, err.message);
 
-    return data;
+    if ((data || []).length > 1) {
+      throw error(409, "Multiple active shifts are assigned for today. Contact HR/Admin.");
+    }
+
+    return (data || [])[0] || null;
   } catch (e) {
     withServiceError(e);
   }

@@ -8,13 +8,16 @@ import overtimeRequestRoutes from "./attendance/overtime-request.routes.js";
 import reportRoutes from "./attendance/report.routes.js";
 
 const attendanceRouter = Router();
+const attendanceModules = [
+  shiftRoutes,
+  assignmentRoutes,
+  checkInCheckOutRoutes,
+  shiftRequestRoutes,
+  overtimeRequestRoutes,
+  reportRoutes,
+];
 
 attendanceRouter.use(protect);
-attendanceRouter.use(shiftRoutes);
-attendanceRouter.use(assignmentRoutes);
-attendanceRouter.use(checkInCheckOutRoutes);
-attendanceRouter.use(shiftRequestRoutes);
-attendanceRouter.use(overtimeRequestRoutes);
-attendanceRouter.use(reportRoutes);
+attendanceModules.forEach((routeModule) => attendanceRouter.use(routeModule));
 
 export default attendanceRouter;

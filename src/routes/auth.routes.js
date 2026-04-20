@@ -19,6 +19,7 @@ import {
 
 const authRouter = express.Router();
 const adminOnly = [protect, authorize("admin")];
+const validateUserId = validateParams(userIdParamSchema);
 
 authRouter.post("/signin", validateBody(signinSchema), signin);
 authRouter.post(
@@ -31,20 +32,20 @@ authRouter.get("/admin/users", ...adminOnly, getUsersByAdmin);
 authRouter.get(
   "/admin/users/:id",
   ...adminOnly,
-  validateParams(userIdParamSchema),
+  validateUserId,
   getUserByIdByAdmin
 );
 authRouter.put(
   "/admin/users/:id",
   ...adminOnly,
-  validateParams(userIdParamSchema),
+  validateUserId,
   validateBody(adminUpdateUserSchema),
   updateUserByAdmin
 );
 authRouter.delete(
   "/admin/users/:id",
   ...adminOnly,
-  validateParams(userIdParamSchema),
+  validateUserId,
   deleteUserByAdmin
 );
 authRouter.get("/user", protect, getUserDetails);

@@ -1,0 +1,57 @@
+import Joi from 'joi';
+
+const sendValidationError = (res, details) =>
+  res.status(400).json({ message: 'Validation error', details: details.map((detail) => detail.message) });
+const validateSchema = (schema) => (req, res, next) => {
+  const { error } = schema.validate(req.body);
+  if (error) return sendValidationError(res, error.details);
+  next();
+};
+
+const dayToken = Joi.alternatives().try(
+  Joi.number().integer().min(0).max(6),
+  Joi.string().valid('sun', 'sunday', 'mon', 'monday', 'tue', 'tuesday', 'wed', 'wednesday', 'thu', 'thursday', 'fri', 'friday', 'sat', 'saturday')
+);
+
+const stringListOrArray = (itemSchema) =>
+  Joi.alternatives().try(
+    Joi.string().trim(),
+    Joi.array().items(itemSchema)
+  );
+
+const attendancePolicySchema = Joi.object({
+  name: Joi.string().required().trim().description('Unique name for the attendance policy'),
+  timezone: Joi.string().default('UTC').description('Timezone for attendance calculations, e.g., "Asia/Karachi"'),
+  apply_proration_default: Joi.boolean().default(true).description('Whether payroll base earnings should be prorated by payable days under this attendance policy'),
+  grace_minutes_default: Joi.number().integer().min(0).default(0).description('Default grace period in minutes for late arrivals'),
+  late_count_for_unpaid_day: Joi.number().integer().min(1).default(3).description('Number of late arrivals that result in one unpaid day'),
+  shift_grace_by_shift_name: Joi.object().pattern(
+    Joi.string(),
+    Joi.number().integer().min(0)
+  ).description('Override grace minutes for specific shifts by shift name'),
+  weekly_off_days: stringListOrArray(dayToken).description('Weekly off days as CSV or array. Example: "0,6" or ["sunday", "sat"]'),
+  working_weekend_dates: stringListOrArray(Joi.string().isoDate()).description('Weekend dates explicitly marked as working. Example: ["2026-04-18"]'),
+  holiday_dates: stringListOrArray(Joi.string().isoDate()).description('Public/local holidays to be treated as non-working dates'),
+  forced_working_dates: stringListOrArray(Joi.string().isoDate()).description('Dates forced as working even if they are weekly offs/holidays'),
+  manual_off_dates: stringListOrArray(Joi.string().isoDate()).description('Dates forced as non-working regardless of weekday')
+});
+
+const attendancePolicyUpdateSchema = attendancePolicySchema.fork(
+  [
+    'name',
+    'timezone',
+    'apply_proration_default',
+    'grace_minutes_default',
+    'late_count_for_unpaid_day',
+    'shift_grace_by_shift_name',
+    'weekly_off_days',
+    'working_weekend_dates',
+    'holiday_dates',
+    'forced_working_dates',
+    'manual_off_dates',
+  ],
+  (field) => field.optional()
+).min(1);
+
+export const createAttendancePolicyValidator = validateSchema(attendancePolicySchema);
+export const updateAttendancePolicyValidator = validateSchema(attendancePolicyUpdateSchema);

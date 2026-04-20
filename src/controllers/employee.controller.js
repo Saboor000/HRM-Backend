@@ -14,6 +14,8 @@ const handleServiceResult = (res, result, successStatus = 200, successBody = res
 };
 
 const handleServerError = (res, err) => res.status(500).json({ message: err.message });
+const sendServiceError = (res, result) =>
+  res.status(result.error.status).json({ message: result.error.message });
 
 export const createEmployee = async (req, res) => {
   try {
@@ -45,20 +47,6 @@ export const getEmployeeById = async (req, res) => {
     return handleServerError(res, err);
   }
 };
-
-// export const updateEmployee = async (req, res) => {
-//   try {
-//     const result = await updateEmployeeService({ id: req.params.id, body: req.body });
-
-//     if (result?.error) {
-//       return res.status(result.error.status).json({ message: result.error.message });
-//     }
-
-//     return res.status(200).json({ message: "Updated successfully", employee: result.employee });
-//   } catch (err) {
-//     return res.status(500).json({ message: err.message });
-//   }
-// };
 export const updateEmployee = async (req, res) => {
   try {
     const result = await updateEmployeeService({
@@ -67,9 +55,7 @@ export const updateEmployee = async (req, res) => {
       files: req.files,
     });
 
-    if (result?.error) {
-      return res.status(result.error.status).json({ message: result.error.message });
-    }
+    if (result?.error) return sendServiceError(res, result);
 
     // If password was provided, update it in Supabase Auth too
     if (req.body.password && result.employee?.auth_id) {

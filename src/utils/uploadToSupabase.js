@@ -10,9 +10,7 @@ const allowedFolders = new Set([
   "other",
 ]);
 
-const sanitizeFileName = (name = "file") => {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
-};
+const sanitizeFileName = (name = "file") => name.replace(/[^a-zA-Z0-9._-]/g, "_");
 
 export const uploadFile = async (file, folder) => {
   if (!file?.buffer) {
@@ -25,7 +23,7 @@ export const uploadFile = async (file, folder) => {
 
   const fileName = `${folder}/${uuidv4()}-${sanitizeFileName(file.originalname)}`;
 
-  const { data, error } = await supabase.storage
+  const { error } = await supabase.storage
     .from("hrms-files")
     .upload(fileName, file.buffer, {
       contentType: file.mimetype || "application/octet-stream",
@@ -35,9 +33,9 @@ export const uploadFile = async (file, folder) => {
 
   if (error) throw error;
 
-  const { data: publicUrl } = supabase.storage
+  const { data: publicUrlData } = supabase.storage
     .from("hrms-files")
     .getPublicUrl(fileName);
 
-  return publicUrl.publicUrl;
+  return publicUrlData.publicUrl;
 };

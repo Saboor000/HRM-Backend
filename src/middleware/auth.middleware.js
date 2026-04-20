@@ -1,9 +1,12 @@
 import jwt from "jsonwebtoken";
 import { supabase } from "../config/supabase.js";
 
+const extractBearerToken = (authorization = "") =>
+  authorization.startsWith("Bearer ") ? authorization.split(" ")[1] : null;
+const forbidden = (res, payload) => res.status(403).json(payload);
+
 export const protect = (req, res, next) => {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+  const token = extractBearerToken(req.headers.authorization || "");
 
   if (!token) {
     return res.status(401).json({ message: "Access denied. Token missing" });
@@ -31,14 +34,14 @@ export const authorize = (...designations) => {
         .single();
 
       if (error || !employee) {
-        return res.status(403).json({
+        return forbidden(res, {
           success: false,
           message: "Forbidden: Employee record not found",
         });
       }
 
       if (!designations.includes(employee.designation)) {
-        return res.status(403).json({
+        return forbidden(res, {
           success: false,
           message: `Forbidden: Only ${designations.join(", ")} can access this resource`,
           required_designation: designations,

@@ -25,6 +25,7 @@ import {
 const leaveRouter = Router();
 const validateLeaveId = validateParams(leaveIdParamSchema);
 const adminHr = authorize("admin", "hr");
+const adminHrManager = authorize("admin", "hr", "manager");
 
 leaveRouter.use(protect);
 
@@ -39,7 +40,7 @@ leaveRouter.patch(
 );
 leaveRouter.get(
   "/leaves",
-  adminHr,
+  adminHrManager,
   validateQuery(leaveListQuerySchema),
   getLeaves,
 );

@@ -14,16 +14,13 @@ const validate = (schema, getter, setter) => (req, res, next) => {
   setter(req, value);
   return next();
 };
+const set = (key) => (req, value) => {
+  req[key] = value;
+};
 
 export const validateBody = (schema) =>
-  validate(schema, (req) => req.body, (req, value) => {
-    req.body = value;
-  });
+  validate(schema, (req) => req.body, set("body"));
 export const validateParams = (schema) =>
-  validate(schema, (req) => req.params, (req, value) => {
-    req.params = value;
-  });
+  validate(schema, (req) => req.params, set("params"));
 export const validateQuery = (schema) =>
-  validate(schema, (req) => req.query, (req, value) => {
-    req.validatedQuery = value;
-  });
+  validate(schema, (req) => req.query, set("validatedQuery"));
