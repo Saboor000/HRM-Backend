@@ -8,6 +8,8 @@ import { supabase } from "./config/supabase.js";
 import employeeRouter from "./routes/employee.routes.js";
 import leaveRouter from "./routes/leave.routes.js";
 import attendanceRouter from "./routes/attendance.routes.js";
+import payrollRouter from "./routes/payroll.routes.js";
+import policyRouter from "./routes/policy.routes.js";
 
 dotenv.config();
 
@@ -18,36 +20,37 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/", (req, res) => {
-	res.status(200).json({
-		message: "HRM backend is running",
-		environment: process.env.NODE_ENV || "development",
-	});
+  res.status(200).json({
+    message: "HRM backend is running",
+    environment: process.env.NODE_ENV || "development",
+  });
 });
 
 app.use("/api/auth", authRouter);
 app.use("/api", employeeRouter);
 app.use("/api", leaveRouter);
 app.use("/api", attendanceRouter);
-
+app.use("/api", payrollRouter);
+app.use("/api", policyRouter);
 app.use(notFound);
 app.use(errorHandler);
 
 const startServer = async () => {
-	try {
-		const { error } = await supabase.from("employees").select("id").limit(1);
+  try {
+    const { error } = await supabase.from("employees").select("id").limit(1);
 
-		if (error) {
-			console.warn(`Supabase connection check warning: ${error.message}`);
-		} else {
-			console.log("Supabase connection established");
-		}
-	} catch (error) {
-		console.error(`Supabase connection failed: ${error.message}`);
-	}
+    if (error) {
+      console.warn(`Supabase connection check warning: ${error.message}`);
+    } else {
+      console.log("Supabase connection established");
+    }
+  } catch (error) {
+    console.error(`Supabase connection failed: ${error.message}`);
+  }
 
-	app.listen(PORT, () => {
-		console.log(`Server running on port ${PORT}`);
-	});
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 };
 
 startServer();

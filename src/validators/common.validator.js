@@ -29,15 +29,15 @@ export const parseFriendlyDate = (value) => {
 };
 
 export const isEndDateBeforeStart = (start, end) => new Date(end) < new Date(start);
+const toClockMinutes = (time) => {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
+};
 
 export const hasSameTime = (start, end) => {
-  const [startH, startM] = start.split(":").map(Number);
-  const [endH, endM] = end.split(":").map(Number);
-  return endH * 60 + endM === startH * 60 + startM;
+  return toClockMinutes(end) === toClockMinutes(start);
 };
 
 export const hasInvalidTimeRange = (start, end) => {
-  const [startH, startM] = start.split(":").map(Number);
-  const [endH, endM] = end.split(":").map(Number);
-  return endH * 60 + endM <= startH * 60 + startM;
+  return toClockMinutes(end) <= toClockMinutes(start);
 };

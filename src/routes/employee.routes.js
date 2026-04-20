@@ -18,6 +18,8 @@ import {
 } from "../validators/employee.validator.js";
 
 const employeeRouter = express.Router();
+const adminHr = authorize("admin", "hr");
+const validateEmployeeId = validateParams(employeeIdParamSchema);
 
 employeeRouter.use(protect);
 
@@ -32,7 +34,7 @@ const uploadFields = upload.fields([
 
 employeeRouter.post(
   "/employee",
-  authorize("admin", "hr"),
+  adminHr,
   uploadFields,
   validateBody(createEmployeeSchema),
   createEmployee,
@@ -40,30 +42,23 @@ employeeRouter.post(
 
 employeeRouter.get(
   "/employee",
-  authorize("admin", "hr"),
+  adminHr,
   validateQuery(employeeListQuerySchema),
   getAllEmployees,
 );
 
 employeeRouter.get(
   "/employee/:id",
-  authorize("admin", "hr"),
-  validateParams(employeeIdParamSchema),
+  adminHr,
+  validateEmployeeId,
   getEmployeeById,
 );
 
-// employeeRouter.put(
-//   "/employee/:id",
-//   authorize("admin", "hr"),
-//   validateParams(employeeIdParamSchema),
-//   validateBody(updateEmployeeSchema),
-//   updateEmployee,
-// );
 employeeRouter.put(
   "/employee/:id",
-  authorize("admin", "hr"),
-  uploadFields,                        // ← ADD THIS (multer must run before body is parsed)
-  validateParams(employeeIdParamSchema),
+  adminHr,
+  uploadFields,
+  validateEmployeeId,
   validateBody(updateEmployeeSchema),
   updateEmployee,
 );
@@ -71,7 +66,7 @@ employeeRouter.put(
 employeeRouter.delete(
   "/employee/:id",
   authorize("admin"),
-  validateParams(employeeIdParamSchema),
+  validateEmployeeId,
   deleteEmployee,
 );
 

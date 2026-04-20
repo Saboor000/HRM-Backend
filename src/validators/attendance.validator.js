@@ -18,6 +18,20 @@ const friendlyDateRule = Joi.alternatives()
     "date.format": "Date must be in YYYY-MM-DD or DD-MM-YYYY format",
     "string.pattern.base": "Date must be in YYYY-MM-DD or DD-MM-YYYY format",
   });
+const attendanceStatusRule = Joi.string()
+  .valid(
+    "online",
+    "offline",
+    "absent",
+    "holiday",
+    "leave",
+    "break",
+    "PRESENT",
+    "ABSENT",
+    "ON_LEAVE",
+    "ON_LEAVE_WORKING"
+  );
+const requestStatusRule = Joi.string().valid("pending", "approved", "rejected");
 export const createShiftSchema = strictObject({
   name: Joi.string().trim().required(),
   start_time: timeHHmmRule.required(),
@@ -108,20 +122,7 @@ export const attendanceRecordsQuerySchema = strictObject({
   date: isoDateRule.allow(null),
   start_date: isoDateRule.allow(null),
   end_date: isoDateRule.allow(null),
-  status: Joi.string()
-    .valid(
-      "online",
-      "offline",
-      "absent",
-      "holiday",
-      "leave",
-      "break",
-      "PRESENT",
-      "ABSENT",
-      "ON_LEAVE",
-      "ON_LEAVE_WORKING"
-    )
-    .allow(null),
+  status: attendanceStatusRule.allow(null),
 });
 
 export const createShiftChangeRequestSchema = strictObject({
@@ -144,9 +145,7 @@ export const shiftChangeRequestQuerySchema = strictObject({
   page: pageRule,
   limit: limitRule,
   employee_id: uuidRule.allow(null),
-  status: Joi.string()
-    .valid("pending", "approved", "rejected")
-    .allow(null),
+  status: requestStatusRule.allow(null),
 });
 
 export const createOvertimeRequestSchema = strictObject({
@@ -171,9 +170,7 @@ export const overtimeRequestQuerySchema = strictObject({
   page: pageRule,
   limit: limitRule,
   employee_id: uuidRule.allow(null),
-  status: Joi.string()
-    .valid("pending", "approved", "rejected")
-    .allow(null),
+  status: requestStatusRule.allow(null),
 });
 
 export const dailyReportQuerySchema = strictObject({

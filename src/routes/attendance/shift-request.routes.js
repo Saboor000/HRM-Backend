@@ -22,6 +22,7 @@ import {
 const router = Router();
 const adminHr = authorize("admin", "hr");
 const adminHrManager = authorize("admin", "hr", "manager");
+const validateShiftRequestId = validateParams(shiftChangeRequestIdParamSchema);
 
 router.post(
   "/attendance/shift-requests",
@@ -38,19 +39,19 @@ router.get("/attendance/shift-requests/me", getMyShiftChangeRequests);
 router.get(
   "/attendance/shift-requests/:id",
   adminHrManager,
-  validateParams(shiftChangeRequestIdParamSchema),
+  validateShiftRequestId,
   getShiftChangeRequestById,
 );
 router.put(
   "/attendance/shift-requests/:id/approve",
   adminHr,
-  validateParams(shiftChangeRequestIdParamSchema),
+  validateShiftRequestId,
   approveShiftChangeRequest,
 );
 router.put(
   "/attendance/shift-requests/:id/reject",
   adminHr,
-  validateParams(shiftChangeRequestIdParamSchema),
+  validateShiftRequestId,
   rejectShiftChangeRequest,
 );
 

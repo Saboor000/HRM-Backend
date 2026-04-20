@@ -257,7 +257,6 @@ export const managerLeaveActionService = async (id, action, user, reason) => {
 
   const actor = await employeeOptional(user.auth_id || user.id);
   const now = nowIso();
-  const isApproved = action === "approved";
   const isRejected = action === "rejected";
   assertDecisionAction(action, "manager");
 

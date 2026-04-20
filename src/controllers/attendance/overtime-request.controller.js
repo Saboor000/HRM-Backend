@@ -8,6 +8,7 @@ import {
 import { employeeByAuth } from "../../services/attendance/assignment.service.js";
 
 const toInt = (value) => Number.parseInt(value, 10);
+const parsePaging = (query) => ({ page: toInt(query.page ?? 1), limit: toInt(query.limit ?? 10) });
 const send = (res, status, message, data, pagination) =>
   res.status(status).json({
     success: true,
@@ -24,6 +25,12 @@ const getListFilters = (query, keys) =>
     return acc;
   }, {});
 
+const withPaginationFilters = async (req, keys, service) => {
+  const { page, limit } = parsePaging(req.query);
+  const filters = getListFilters(req.query, keys);
+  return service(filters, page, limit);
+};
+
 export const createOvertimeRequest = async (req, res, next) => {
   try {
     const data = await createOvertimeRequestService(req.user.id, req.body);
@@ -35,9 +42,7 @@ export const createOvertimeRequest = async (req, res, next) => {
 
 export const getOvertimeRequests = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
-    const filters = getListFilters(req.query, ["employee_id", "status"]);
-    const data = await getOvertimeRequestsService(filters, toInt(page), toInt(limit));
+    const data = await withPaginationFilters(req, ["employee_id", "status"], getOvertimeRequestsService);
     send(res, 200, "Overtime requests retrieved successfully", data.data, data.pagination);
   } catch (err) {
     next(err);
@@ -46,13 +51,13 @@ export const getOvertimeRequests = async (req, res, next) => {
 
 export const getMyOvertimeRequests = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
+    const { page, limit } = parsePaging(req.query);
     const employee = await employeeByAuth(req.user.id);
     const filters = getListFilters(req.query, ["status"]);
     const data = await getOvertimeRequestsService(
       { ...filters, employee_id: employee.id },
-      toInt(page),
-      toInt(limit)
+      page,
+      limit
     );
     send(res, 200, "My overtime requests retrieved successfully", data.data, data.pagination);
   } catch (err) {

@@ -9,6 +9,12 @@ const getRole = (user) => {
 const getName = (user) => user?.user_metadata?.name || null;
 const trimOrNull = (value) => (typeof value === "string" && value.trim() ? value.trim() : null);
 const badRequest = (res, error) => res.status(400).json({ message: error.message });
+const getAuthUserByIdOrResponse = async (res, id, notFoundMessage = "User not found") => {
+  const { data, error } = await supabase.auth.admin.getUserById(id);
+  if (error) return { response: badRequest(res, error) };
+  if (!data?.user) return { response: res.status(404).json({ message: notFoundMessage }) };
+  return { data };
+};
 
 const mapAuthUser = (user) => ({
   id: user.id,
@@ -124,13 +130,8 @@ export const getUserDetails = async (req, res, next) => {
   try {
     const { auth_id } = req.user;
 
-    const { data: authUserData, error: authUserError } = await supabase.auth.admin.getUserById(auth_id);
-
-    if (authUserError) return badRequest(res, authUserError);
-
-    if (!authUserData?.user) {
-      return res.status(404).json({ message: "User profile not found" });
-    }
+    const { data: authUserData, response } = await getAuthUserByIdOrResponse(res, auth_id, "User profile not found");
+    if (response) return response;
 
     const { data: employee, error: employeeError } = await supabase
       .from("employees")
@@ -194,14 +195,8 @@ export const getUsersByAdmin = async (req, res, next) => {
 export const getUserByIdByAdmin = async (req, res, next) => {
   try {
     const { id } = req.params;
-
-    const { data, error } = await supabase.auth.admin.getUserById(id);
-
-    if (error) return badRequest(res, error);
-
-    if (!data?.user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    const { data, response } = await getAuthUserByIdOrResponse(res, id);
+    if (response) return response;
 
     return res.status(200).json({
       message: "User fetched successfully",
@@ -217,15 +212,9 @@ export const updateUserByAdmin = async (req, res, next) => {
     const { id } = req.params;
     const { email, password, name, role } = req.body;
 
-    const { data: targetAuthData, error: targetUserError } = await supabase.auth.admin.getUserById(id);
-
-    if (targetUserError) return badRequest(res, targetUserError);
-
-    const targetUser = targetAuthData?.user ? mapAuthUser(targetAuthData.user) : null;
-
-    if (!targetUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    const { data: targetAuthData, response: targetResponse } = await getAuthUserByIdOrResponse(res, id);
+    if (targetResponse) return targetResponse;
+    const targetUser = mapAuthUser(targetAuthData.user);
 
     if (role === "admin") {
       return res.status(403).json({ message: "Admin role cannot be assigned from API" });
@@ -262,9 +251,8 @@ export const updateUserByAdmin = async (req, res, next) => {
       if (authUpdateError) return badRequest(res, authUpdateError);
     }
 
-    const { data: refreshedUserData, error: refreshedUserError } = await supabase.auth.admin.getUserById(id);
-
-    if (refreshedUserError) return badRequest(res, refreshedUserError);
+    const { data: refreshedUserData, response: refreshedResponse } = await getAuthUserByIdOrResponse(res, id);
+    if (refreshedResponse) return refreshedResponse;
 
     return res.status(200).json({
       message: "User updated successfully",
@@ -283,15 +271,9 @@ export const deleteUserByAdmin = async (req, res, next) => {
       return res.status(400).json({ message: "Admin cannot delete their own account" });
     }
 
-    const { data: targetAuthData, error: targetUserError } = await supabase.auth.admin.getUserById(id);
-
-    if (targetUserError) return badRequest(res, targetUserError);
-
-    const targetUser = targetAuthData?.user ? mapAuthUser(targetAuthData.user) : null;
-
-    if (!targetUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    const { data: targetAuthData, response: targetResponse } = await getAuthUserByIdOrResponse(res, id);
+    if (targetResponse) return targetResponse;
+    const targetUser = mapAuthUser(targetAuthData.user);
 
     if (targetUser.role === "admin") {
       return res.status(400).json({ message: "Seeded admin account cannot be deleted" });

@@ -41,49 +41,42 @@ const send = (res, status, message, data, pagination) =>
     ...(pagination ? { pagination } : {}),
   });
 
-export const getDailyReport = async (req, res, next) => {
+const runReport = (service, message, getArgs) => async (req, res, next) => {
   try {
-    const { date, department } = req.query;
-    const data = await getDailyAttendanceReportService(requireIsoDate(date, "date"), department);
-    send(res, 200, "Daily report retrieved successfully", data);
+    const data = await service(...getArgs(req));
+    send(res, 200, message, data);
   } catch (err) {
     next(err);
   }
 };
 
-export const getWeeklyReport = async (req, res, next) => {
-  try {
-    const { week_of, year } = req.query;
-    const data = await getWeeklyAttendanceReportService(requireIsoDate(week_of, "week_of"), toInt(year));
-    send(res, 200, "Weekly report retrieved successfully", data);
-  } catch (err) {
-    next(err);
-  }
-};
+export const getDailyReport = runReport(
+  getDailyAttendanceReportService,
+  "Daily report retrieved successfully",
+  (req) => [requireIsoDate(req.query.date, "date"), req.query.department]
+);
 
-export const getMonthlyReport = async (req, res, next) => {
-  try {
-    const { month, year, department } = req.query;
-    const data = await getMonthlyAttendanceReportService(toInt(month), toInt(year), department);
-    send(res, 200, "Monthly report retrieved successfully", data);
-  } catch (err) {
-    next(err);
-  }
-};
+export const getWeeklyReport = runReport(
+  getWeeklyAttendanceReportService,
+  "Weekly report retrieved successfully",
+  (req) => [requireIsoDate(req.query.week_of, "week_of"), toInt(req.query.year)]
+);
 
-export const getTeamSummaryReport = async (req, res, next) => {
-  try {
-    const { start_date, end_date, team_id } = req.query;
-    const data = await getTeamSummaryReportService(
-      requireIsoDate(start_date, "start_date"),
-      requireIsoDate(end_date, "end_date"),
-      team_id
-    );
-    send(res, 200, "Team summary report retrieved successfully", data);
-  } catch (err) {
-    next(err);
-  }
-};
+export const getMonthlyReport = runReport(
+  getMonthlyAttendanceReportService,
+  "Monthly report retrieved successfully",
+  (req) => [toInt(req.query.month), toInt(req.query.year), req.query.department]
+);
+
+export const getTeamSummaryReport = runReport(
+  getTeamSummaryReportService,
+  "Team summary report retrieved successfully",
+  (req) => [
+    requireIsoDate(req.query.start_date, "start_date"),
+    requireIsoDate(req.query.end_date, "end_date"),
+    req.query.team_id,
+  ]
+);
 
 export const getMyAttendanceReport = async (req, res, next) => {
   try {

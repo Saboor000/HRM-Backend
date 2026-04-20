@@ -23,6 +23,7 @@ import {
 const router = Router();
 const adminHr = authorize("admin", "hr");
 const adminHrManager = authorize("admin", "hr", "manager");
+const validateShiftId = validateParams(shiftIdParamSchema);
 
 router.post(
   "/attendance/shifts",
@@ -35,27 +36,27 @@ router.get("/attendance/shifts/me", getMyShifts);
 router.get(
   "/attendance/shifts/:id",
   adminHrManager,
-  validateParams(shiftIdParamSchema),
+  validateShiftId,
   getShiftById,
 );
 router.put(
   "/attendance/shifts/:id",
   adminHr,
-  validateParams(shiftIdParamSchema),
+  validateShiftId,
   validateBody(updateShiftSchema),
   updateShift,
 );
 router.patch(
   "/attendance/shifts/:id/status",
   adminHr,
-  validateParams(shiftIdParamSchema),
+  validateShiftId,
   validateBody(shiftStatusSchema),
   toggleShiftStatus,
 );
 router.delete(
   "/attendance/shifts/:id",
   adminHr,
-  validateParams(shiftIdParamSchema),
+  validateShiftId,
   deleteShift,
 );
 

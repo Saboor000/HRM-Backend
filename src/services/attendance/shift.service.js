@@ -2,6 +2,17 @@ import { supabase } from "../../config/supabase.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
 const nowIso = () => new Date().toISOString();
+const updateShiftById = async (id, payload) => {
+  const { data, error: err } = await supabase
+    .from("shifts")
+    .update(payload)
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (err) throw error(400, err.message);
+  return data;
+};
 
 export const validateShiftTiming = (startTime, endTime) => {
   const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -169,18 +180,10 @@ export const toggleShiftStatusService = async (id, isActive) => {
   try {
     await getShiftByIdService(id);
 
-    const { data, error: err } = await supabase
-      .from("shifts")
-      .update({
-        is_active: isActive,
-        updated_at: nowIso(),
-      })
-      .eq("id", id)
-      .select("*")
-      .single();
-
-    if (err) throw error(400, err.message);
-    return data;
+    return updateShiftById(id, {
+      is_active: isActive,
+      updated_at: nowIso(),
+    });
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);
@@ -210,17 +213,10 @@ export const deleteShiftService = async (id) => {
 
     if ((attendanceCount || 0) > 0) {
       if (shift.is_active) {
-        const { data: archivedShift, error: archiveErr } = await supabase
-          .from("shifts")
-          .update({
-            is_active: false,
-            updated_at: nowIso(),
-          })
-          .eq("id", id)
-          .select("*")
-          .single();
-
-        if (archiveErr) throw error(400, archiveErr.message);
+        const archivedShift = await updateShiftById(id, {
+          is_active: false,
+          updated_at: nowIso(),
+        });
 
         return {
           success: true,
