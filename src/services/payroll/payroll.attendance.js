@@ -1,7 +1,8 @@
 import { supabase } from "../../config/supabase.js";
 import { resolveTimezone, toClockMinutesInTimezone } from "../../utils/timezone.js";
-import { applyOvertimeConstraints } from "./payroll.overtime.js";
+import { applyOvertimeConstraints, evaluateOvertimeFromAttendance, separateApprovedOvertimeByApproval } from "./payroll.overtime.js";
 import { DEFAULT_POLICY_TIMEZONE, LATE_ARRIVAL_PENALTY_STEP, error, getPeriodBounds, isBusinessDay, round2, toDateOnly } from "./payroll.utils.js";
+import { evaluateAttendancePeriod } from "../attendance/evaluated-attendance.service.js";
 
 const getLeaveUnit = (leave, leaveRules = {}) => {
   const halfDayUnit = Number(leaveRules.half_day_unit ?? 0.5);
@@ -201,7 +202,7 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
   const [
     { data: attendanceRows, error: attendanceErr },
     { data: leaveRows, error: leaveErr },
-    { data: overtimeRows, error: overtimeErr },
+    { data: overtimeApprovalsData, error: overtimeApprovalsErr },
     { data: assignmentsRows, error: assignmentsErr },
   ] =
     await Promise.all([
@@ -242,22 +243,57 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
 
   if (attendanceErr) throw error(400, attendanceErr.message);
   if (leaveErr) throw error(400, leaveErr.message);
-  if (overtimeErr) throw error(400, overtimeErr.message);
+  if (overtimeApprovalsErr) throw error(400, overtimeApprovalsErr.message);
   if (assignmentsErr) throw error(400, assignmentsErr.message);
 
   const attendanceByDate = groupAttendanceByDate(attendanceRows, attendanceRules);
   const leaveByDate = groupLeavesByDate(leaveRows, bounds.workingDates);
   const shiftByDate = resolveShiftAssignmentByDate(assignmentsRows || [], bounds.workingDates);
-  const lateEvaluation = countShiftBasedLateArrivals({
-    attendanceByDate,
-    shiftByDate,
-    attendanceRules,
+  const attendanceEvaluation = evaluateAttendancePeriod({
+    attendanceRows: attendanceRows || [],
+    leaveRows: leaveRows || [],
+    assignmentsRows: assignmentsRows || [],
+    periodBounds: bounds,
+    attendancePolicy: attendanceRules,
+    leaveRules: payrollRules?.leave || {},
   });
-  const overtimeEvaluation = applyOvertimeConstraints(overtimeRows || [], payrollRules?.overtime || {});
+  const lateEvaluation = {
+    count: Number(attendanceEvaluation.summary.late_arrivals || 0),
+    details: attendanceEvaluation.evaluations.filter((entry) => entry.is_late),
+    policy: {
+      timezone: attendanceRules.timezone || DEFAULT_POLICY_TIMEZONE,
+      grace_minutes_default: Number(attendanceRules.grace_minutes_default || 0),
+      shift_grace_by_shift_id: attendanceRules.shift_grace_by_shift_id || {},
+      shift_grace_by_shift_name: attendanceRules.shift_grace_by_shift_name || {},
+    },
+  };
+  
+  // Evaluate overtime from actual attendance records (attendance-based source of truth)
+  const potentialOvertimeRows = evaluateOvertimeFromAttendance(
+    attendanceRows || [],
+    shiftByDate,
+    payrollRules?.overtime || {}
+  );
+  
+  // Separate approved vs unapproved overtime
+  // - Approved: paid at overtime rate
+  // - Unapproved: added back to working hours as regular time
+  const overtimeApprovalSplit = separateApprovedOvertimeByApproval(
+    potentialOvertimeRows,
+    overtimeApprovalsData || []
+  );
+  
+  // Apply constraints only to approved overtime
+  const approvedOvertimeRows = Array.from(overtimeApprovalSplit.approved_hours_by_date.entries()).map(([date, hours]) => ({
+    date,
+    hours,
+  }));
+  const overtimeEvaluation = applyOvertimeConstraints(approvedOvertimeRows, payrollRules?.overtime || {});
 
   const dayStats = new Map();
 
   let presentDays = 0;
+  let halfDays = 0;
   let paidLeaveDays = 0;
   let unpaidLeaveDays = 0;
 
@@ -302,36 +338,86 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
     });
   }
 
+  presentDays = Number(attendanceEvaluation.summary.present_days || 0);
+  halfDays = Number(attendanceEvaluation.summary.half_days || 0);
+  paidLeaveDays = Number(attendanceEvaluation.summary.paid_leave_days || 0);
+  unpaidLeaveDays = Number(attendanceEvaluation.summary.unpaid_leave_days || 0);
+
   const sandwichEvaluation = applySandwichLeaveAdjustments({
     dayStats,
     workingDates: bounds.workingDates,
     leaveRules: payrollRules?.leave || {},
   });
 
-  for (const day of bounds.workingDates) {
-    const s = dayStats.get(day);
-    if (!s) continue;
-    presentDays += Number(s.present_portion || 0);
-    paidLeaveDays += Number(s.paid_portion || 0);
-    unpaidLeaveDays += Number(s.unpaid_portion || 0);
-  }
+  const sandwichAddedUnpaidDays = Number(sandwichEvaluation.added_unpaid_days || 0);
+  unpaidLeaveDays += sandwichAddedUnpaidDays;
 
   const overtimeHours = overtimeEvaluation.accepted_hours;
-  const lateArrivals = lateEvaluation.count;
+  const lateArrivals = Number(attendanceEvaluation.summary.late_arrivals || 0);
+  const halfDayUnits = Number(attendanceEvaluation.summary.half_day_units || 0);
+  const payableDays = Math.max(0, Number(attendanceEvaluation.summary.payable_days || 0) - sandwichAddedUnpaidDays);
+
+  // Track shift hours, working hours, and overtime hours
+  const totalShiftHours = round2(
+    Array.from(bounds.workingDates).reduce((sum, day) => {
+      const shift = shiftByDate.get(day);
+      return sum + (shift?.shift?.duration_hours ? Number(shift.shift.duration_hours) : 8);
+    }, 0)
+  );
+  
+  const totalWorkingHours = round2(
+    (attendanceRows || []).reduce((sum, row) => sum + Number(row.duration_hours || 0), 0)
+  );
+  
+  const totalUnapprovedOvertime = round2(overtimeApprovalSplit.summary.total_unapproved_overtime || 0);
+  const totalApprovedOvertime = round2(overtimeApprovalSplit.summary.total_approved_overtime || 0);
 
   // Filter attendanceRows for this employee and working days, and include all records
   const filteredAttendanceRows = (attendanceRows || []).filter(r => r.employee_id === employeeId || !r.employee_id);
+  
+  // Build overtime rows for return (approved overtime rows + metadata about approvals)
+  const overtimeRowsForReturn = approvedOvertimeRows.map(row => ({
+    ...row,
+    approval_status: 'approved'
+  }));
+  
+  // Add unapproved overtime rows for tracking
+  Array.from(overtimeApprovalSplit.unapproved_hours_by_date.entries()).forEach(([date, hours]) => {
+    overtimeRowsForReturn.push({
+      date,
+      hours,
+      approval_status: 'unapproved_added_to_working_hours'
+    });
+  });
+  
   return {
     ...bounds,
     attendanceRows: filteredAttendanceRows,
     leaveRows: leaveRows || [],
-    overtimeRows: overtimeRows || [],
+    overtimeRows: overtimeRowsForReturn,
     attendanceSummary: {
       total_working_days: bounds.workingDays,
       non_working_days: (bounds.nonWorkingDates || []).length,
       non_working_dates: bounds.nonWorkingDates || [],
       present_days: round2(presentDays),
+      half_days: round2(halfDays),
+      half_day_units: round2(halfDayUnits),
       absent_days: round2(unpaidLeaveDays),
+      payable_days: round2(payableDays),
+      shift_tracking: {
+        total_shift_hours: totalShiftHours,
+        total_working_hours: totalWorkingHours,
+        working_hours_breakdown: {
+          from_attendance: round2(totalWorkingHours - totalUnapprovedOvertime),
+          from_unapproved_overtime: totalUnapprovedOvertime,
+        },
+      },
+      overtime_tracking: {
+        potential_overtime: round2(overtimeApprovalSplit.summary.total_potential_overtime || 0),
+        approved_overtime: totalApprovedOvertime,
+        unapproved_overtime: totalUnapprovedOvertime,
+        note: 'approved_overtime paid at overtime rate; unapproved_overtime added to working_hours as regular pay',
+      },
       overtime_hours: round2(overtimeHours),
       late_arrivals: lateArrivals,
       late_penalty_days: 0,
@@ -343,6 +429,10 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
         applied_unpaid_days_from_late: 0,
       },
       late_evaluation: lateEvaluation,
+      evaluated_attendance: {
+        summary: attendanceEvaluation.summary,
+        records: attendanceEvaluation.evaluations,
+      },
       overtime_policy: overtimeEvaluation.policy,
       overtime_violations: overtimeEvaluation.violations,
       sandwich_policy: sandwichEvaluation.policy,

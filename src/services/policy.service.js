@@ -103,6 +103,25 @@ const normalizeOvertimePolicyPayload = (policyData = {}) => {
   } else {
     normalized.apply_proration_default = false;
   }
+
+  if (Object.prototype.hasOwnProperty.call(normalized, "require_full_shift_for_overtime")) {
+    normalized.require_full_shift_for_overtime = Boolean(normalized.require_full_shift_for_overtime);
+  } else {
+    normalized.require_full_shift_for_overtime = true;
+  }
+
+  const enforceLimits = Object.prototype.hasOwnProperty.call(normalized, "enforce_limits")
+    ? Boolean(normalized.enforce_limits)
+    : undefined;
+
+  const mode = String(normalized.limit_enforcement_mode || "").toLowerCase();
+  if (mode === "strict" || mode === "manual") {
+    normalized.limit_enforcement_mode = mode;
+  } else {
+    normalized.limit_enforcement_mode = enforceLimits === true ? "strict" : "manual";
+  }
+
+  delete normalized.enforce_limits;
   return normalized;
 };
 

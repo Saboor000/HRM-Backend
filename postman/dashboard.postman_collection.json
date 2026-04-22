@@ -1,0 +1,141 @@
+{
+  "info": {
+    "name": "HRM Dashboard APIs",
+    "description": "Role-aware dashboard overview and combined attendance analytics endpoints with optional date/department/employee filters.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "token", "value": "" },
+    { "key": "startDate", "value": "2026-04-01" },
+    { "key": "endDate", "value": "2026-04-30" },
+    { "key": "department", "value": "Development" },
+    { "key": "employeeId", "value": "" },
+    { "key": "month", "value": "4" },
+    { "key": "year", "value": "2026" }
+  ],
+  "item": [
+    {
+      "name": "Generic Role-Aware Endpoints",
+      "item": [
+        {
+          "name": "Dashboard Overview",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/overview?start_date={{startDate}}&end_date={{endDate}}&department={{department}}&employee_id={{employeeId}}&month={{month}}&year={{year}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "overview"],
+              "query": [
+                { "key": "start_date", "value": "{{startDate}}" },
+                { "key": "end_date", "value": "{{endDate}}" },
+                { "key": "department", "value": "{{department}}" },
+                { "key": "employee_id", "value": "{{employeeId}}" },
+                { "key": "month", "value": "{{month}}" },
+                { "key": "year", "value": "{{year}}" }
+              ]
+            },
+            "description": "Role-aware overview for admin/hr/manager/employee. Employee scope is auto-restricted."
+          }
+        },
+        {
+          "name": "Combined Attendance Analytics",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/attendance-analytics?start_date={{startDate}}&end_date={{endDate}}&department={{department}}&employee_id={{employeeId}}&group_by=day&top_n=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "attendance-analytics"],
+              "query": [
+                { "key": "start_date", "value": "{{startDate}}" },
+                { "key": "end_date", "value": "{{endDate}}" },
+                { "key": "department", "value": "{{department}}" },
+                { "key": "employee_id", "value": "{{employeeId}}" },
+                { "key": "group_by", "value": "day" },
+                { "key": "top_n", "value": "10" }
+              ]
+            },
+            "description": "Single combined analytics response with KPI cards, trend, departments, overtime, leaves, pending approvals."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Role-Specific Convenience Endpoints",
+      "item": [
+        {
+          "name": "Admin Dashboard",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/admin?start_date={{startDate}}&end_date={{endDate}}&department={{department}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "admin"],
+              "query": [
+                { "key": "start_date", "value": "{{startDate}}" },
+                { "key": "end_date", "value": "{{endDate}}" },
+                { "key": "department", "value": "{{department}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "HR Dashboard",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/hr?start_date={{startDate}}&end_date={{endDate}}&department={{department}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "hr"],
+              "query": [
+                { "key": "start_date", "value": "{{startDate}}" },
+                { "key": "end_date", "value": "{{endDate}}" },
+                { "key": "department", "value": "{{department}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Manager Dashboard",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/manager?start_date={{startDate}}&end_date={{endDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "manager"],
+              "query": [
+                { "key": "start_date", "value": "{{startDate}}" },
+                { "key": "end_date", "value": "{{endDate}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Employee Dashboard",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/employee?start_date={{startDate}}&end_date={{endDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "dashboard", "employee"],
+              "query": [
+                { "key": "start_date", "value": "{{startDate}}" },
+                { "key": "end_date", "value": "{{endDate}}" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

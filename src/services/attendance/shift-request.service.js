@@ -38,6 +38,21 @@ const updateShiftRequestStatus = async (id, approverId, status) => {
   return data;
 };
 
+const updateShiftRequestCancellation = async (id) => {
+  const { data, error: err } = await supabase
+    .from("shift_change_requests")
+    .update({
+      status: "cancelled",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select(SHIFT_REQUEST_SELECT)
+    .single();
+
+  if (err) throw error(400, err.message);
+  return data;
+};
+
 const normalizeDateOnly = (value, fieldName = "date") => {
   if (!value) {
     throw error(422, `${fieldName} is required`);
@@ -152,6 +167,24 @@ export const rejectShiftChangeRequestService = async (id, userId) => {
     ensurePendingStatus(request, "reject");
 
     return updateShiftRequestStatus(id, approver.id, "rejected");
+  } catch (e) {
+    if (e.status) throw e;
+    throw error(400, e.message);
+  }
+};
+
+export const cancelShiftChangeRequestService = async (id, userId) => {
+  try {
+    const requester = await employeeByAuth(userId);
+    const request = await getShiftChangeRequestByIdService(id);
+
+    if (request.employee_id !== requester.id) {
+      throw error(403, "You can only cancel your own shift change request");
+    }
+
+    ensurePendingStatus(request, "cancel");
+
+    return updateShiftRequestCancellation(id);
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);

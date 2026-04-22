@@ -10,6 +10,7 @@ import leaveRouter from "./routes/leave.routes.js";
 import attendanceRouter from "./routes/attendance.routes.js";
 import payrollRouter from "./routes/payroll.routes.js";
 import policyRouter from "./routes/policy.routes.js";
+import dashboardRouter from "./routes/dashboard.routes.js";
 
 dotenv.config();
 
@@ -32,6 +33,7 @@ app.use("/api", leaveRouter);
 app.use("/api", attendanceRouter);
 app.use("/api", payrollRouter);
 app.use("/api", policyRouter);
+app.use("/api", dashboardRouter);
 app.use(notFound);
 app.use(errorHandler);
 

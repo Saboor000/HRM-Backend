@@ -31,7 +31,7 @@ const attendanceStatusRule = Joi.string()
     "ON_LEAVE",
     "ON_LEAVE_WORKING"
   );
-const requestStatusRule = Joi.string().valid("pending", "approved", "rejected");
+const requestStatusRule = Joi.string().valid("pending", "approved", "rejected", "cancelled");
 export const createShiftSchema = strictObject({
   name: Joi.string().trim().required(),
   start_time: timeHHmmRule.required(),
@@ -173,36 +173,90 @@ export const overtimeRequestQuerySchema = strictObject({
   status: requestStatusRule.allow(null),
 });
 
-export const dailyReportQuerySchema = strictObject({
-  date: friendlyDateRule.required(),
-  department: Joi.string().trim().optional(),
-});
+const reportTypeRule = Joi.string().valid(
+  "daily",
+  "weekly",
+  "monthly",
+  "summary",
+  "leaves",
+  "overtime",
+  "shift-management",
+  "shifts",
+  "shift-changes",
+  "checkin-checkout",
+  "employees"
+);
 
-export const weeklyReportQuerySchema = strictObject({
-  week_of: friendlyDateRule.required(),
-  year: Joi.number().integer().min(2000).max(2100).required(),
-});
+export const reportQuerySchema = strictObject({
+  report_type: reportTypeRule.required(),
+  page: pageRule,
+  limit: limitRule,
 
-export const monthlyReportQuerySchema = strictObject({
-  month: Joi.number().integer().min(1).max(12).required(),
-  year: Joi.number().integer().min(2000).max(2100).required(),
-  department: Joi.string().trim().optional(),
-});
+  date: friendlyDateRule,
+  week_of: friendlyDateRule,
+  month: Joi.number().integer().min(1).max(12),
+  year: Joi.number().integer().min(2000).max(2100),
+  start_date: friendlyDateRule,
+  end_date: friendlyDateRule,
 
-export const summaryReportQuerySchema = strictObject({
-  team_id: uuidRule.optional(),
-  start_date: friendlyDateRule.required(),
-  end_date: friendlyDateRule.required(),
+  department: Joi.string().trim().max(100),
+  team_id: uuidRule,
+  employee_id: uuidRule,
+  shift_id: uuidRule,
+
+  status: Joi.string().trim().valid(
+    "pending",
+    "approved",
+    "rejected",
+    "cancelled",
+    "online",
+    "offline",
+    "absent",
+    "holiday",
+    "leave",
+    "break",
+    "PRESENT",
+    "ABSENT",
+    "ON_LEAVE",
+    "ON_LEAVE_WORKING"
+  ),
+  manager_status: Joi.string().valid("pending", "approved", "rejected"),
+  hr_status: Joi.string().valid("pending", "approved", "rejected"),
+  leave_type: Joi.string().valid("full_day", "half_day", "short_leave"),
+  is_active: Joi.boolean(),
+  has_overtime: Joi.boolean(),
+  search: Joi.string().trim().max(100).allow(""),
+  role: Joi.string().trim().valid("admin", "employee", "hr", "manager"),
+  employmentType: Joi.string().trim().valid("full_time", "part_time", "contract", "intern"),
+  gender: Joi.string().trim().valid("male", "female", "other"),
+  sortBy: Joi.string().trim().valid("created_at", "joining_date", "first_name", "last_name", "department", "designation").default("created_at"),
+  sortOrder: Joi.string().trim().valid("asc", "desc").default("desc"),
 })
   .custom((value, helpers) => {
-    const startDate = parseFriendlyDate(value.start_date);
-    const endDate = parseFriendlyDate(value.end_date);
-    if (!startDate || Number.isNaN(startDate.getTime()) || !endDate || Number.isNaN(endDate.getTime())) {
-      return helpers.message("Start date and end date must be in YYYY-MM-DD or DD-MM-YYYY format");
+    const { report_type: type } = value;
+
+    if (type === "daily" && !value.date) {
+      return helpers.message("date is required for daily report");
+    }
+    if (type === "weekly" && (!value.week_of || !value.year)) {
+      return helpers.message("week_of and year are required for weekly report");
+    }
+    if (type === "monthly" && (!value.month || !value.year)) {
+      return helpers.message("month and year are required for monthly report");
+    }
+    if (type === "summary" && (!value.start_date || !value.end_date)) {
+      return helpers.message("start_date and end_date are required for summary report");
     }
 
-    if (endDate < startDate) {
-      return helpers.message("End date must be greater than or equal to start date");
+    if (value.start_date && value.end_date) {
+      const startDate = parseFriendlyDate(value.start_date);
+      const endDate = parseFriendlyDate(value.end_date);
+      if (!startDate || Number.isNaN(startDate.getTime()) || !endDate || Number.isNaN(endDate.getTime())) {
+        return helpers.message("Start date and end date must be in YYYY-MM-DD or DD-MM-YYYY format");
+      }
+      if (endDate < startDate) {
+        return helpers.message("End date must be greater than or equal to start date");
+      }
     }
 
     return value;

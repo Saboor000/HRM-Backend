@@ -36,8 +36,6 @@ export {
 } from "./attendance/overtime-request.controller.js";
 
 export {
-  getDailyReport,
-  getWeeklyReport,
-  getMonthlyReport,
-  getTeamSummaryReport,
+  getAttendanceReport,
+  getMyAttendanceReport,
 } from "./attendance/report.controller.js";
