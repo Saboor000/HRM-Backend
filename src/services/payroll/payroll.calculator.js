@@ -16,9 +16,12 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
     workingDays: Number(period.workingDays || 0),
     attendance: {
       present_days: round2(period.attendanceSummary.present_days),
+      half_days: round2(period.attendanceSummary.half_days || 0),
+      half_day_units: round2(period.attendanceSummary.half_day_units || 0),
       paid_leave_days: round2(period.leaveSummary.paid_leave_days),
       unpaid_leave_days: round2(period.leaveSummary.unpaid_leave_days),
       overtime_hours: round2(period.attendanceSummary.overtime_hours),
+      unapproved_overtime_hours: round2(period.attendanceSummary.shift_tracking?.working_hours_breakdown?.from_unapproved_overtime || 0),
       late_arrivals: Number(period.attendanceSummary.late_arrivals || 0),
       late_penalty_days: 0,
     },
@@ -33,6 +36,7 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
     allowancesTotal: 0,
     bonusesTotal: 0,
     overtimeAmount: 0,
+    unapprovedOvertimeAsRegularPay: 0,
     grossSalary: 0,
     deductionsTotal: 0,
     netSalary: 0,
@@ -87,10 +91,14 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
   });
 
   ctx.attendance.present_days = round2(Math.max(0, ctx.attendance.present_days));
+  ctx.attendance.half_days = round2(Math.max(0, ctx.attendance.half_days || 0));
+  ctx.attendance.half_day_units = round2(Math.max(0, ctx.attendance.half_day_units || 0));
   ctx.attendance.paid_leave_days = round2(Math.max(0, ctx.attendance.paid_leave_days));
   ctx.attendance.unpaid_leave_days = round2(Math.max(0, ctx.attendance.unpaid_leave_days));
   // Proration must always use correct payable days
-  ctx.payableDays = round2(ctx.attendance.present_days + ctx.attendance.paid_leave_days);
+  ctx.payableDays = round2(
+    ctx.attendance.present_days + ctx.attendance.paid_leave_days + ctx.attendance.half_day_units
+  );
   const payableRatio = ctx.workingDays > 0 ? ctx.payableDays / ctx.workingDays : 0;
 
   recordAudit("leave_adjustment", {
@@ -157,6 +165,8 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
       {
         presentDays: ctx.attendance.present_days,
         payableDays: ctx.payableDays,
+        half_days: ctx.attendance.half_days,
+        half_day_units: ctx.attendance.half_day_units,
         payableRatio,
         unpaidLeaves: ctx.attendance.unpaid_leave_days,
       }
@@ -186,8 +196,13 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
     ctx.overtimeHourlyRate * ctx.attendance.overtime_hours * Number(rules.overtime.multiplier) * overtimeProrationFactor
   );
 
+  // Unapproved overtime is paid as regular working hours (no multiplier)
+  ctx.unapprovedOvertimeAsRegularPay = round2(
+    ctx.overtimeHourlyRate * ctx.attendance.unapproved_overtime_hours * overtimeProrationFactor
+  );
+
   ctx.grossSalary = round2(
-    ctx.basicSalaryProrated + ctx.allowancesTotal + ctx.bonusesTotal + ctx.overtimeAmount
+    ctx.basicSalaryProrated + ctx.allowancesTotal + ctx.bonusesTotal + ctx.overtimeAmount + ctx.unapprovedOvertimeAsRegularPay
   );
 
   recordAudit("earnings_calculation", {
@@ -301,12 +316,15 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
     allowances: ctx.allowanceItems,
     bonuses: ctx.bonusItems,
     overtime: {
-      hours: round2(ctx.attendance.overtime_hours),
+      approved_hours: round2(ctx.attendance.overtime_hours),
+      unapproved_hours: round2(ctx.attendance.unapproved_overtime_hours),
       hourly_rate: ctx.overtimeHourlyRate,
       standard_work_hours_per_day: Number(rules.overtime.standard_work_hours_per_day),
       total_working_hours: ctx.overtimeWorkHours,
-      rate_multiplier: Number(rules.overtime.multiplier),
-      amount: ctx.overtimeAmount,
+      approved_rate_multiplier: Number(rules.overtime.multiplier),
+      approved_overtime_amount: ctx.overtimeAmount,
+      unapproved_overtime_amount: ctx.unapprovedOvertimeAsRegularPay,
+      note: 'approved_overtime multiplied by rate_multiplier; unapproved_overtime paid at regular rate',
     },
   };
 
@@ -357,7 +375,11 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
       unpaid_leaves: round2(ctx.attendance.unpaid_leave_days),
       payable_days: round2(ctx.payableDays),
       proration_factor_percent: round2(ctx.prorateFactorPercent),
-      overtime_hours: round2(ctx.attendance.overtime_hours),
+      overtime_tracking: {
+        approved_overtime_hours: round2(ctx.attendance.overtime_hours),
+        unapproved_overtime_hours: round2(ctx.attendance.unapproved_overtime_hours),
+        note: 'approved_overtime paid at overtime multiplier rate; unapproved_overtime paid at regular hourly rate',
+      },
       late_arrivals: Number(ctx.attendance.late_arrivals || 0),
       late_penalty_days: Number(ctx.attendance.late_penalty_days || 0),
       late_penalty_rule: {
@@ -386,6 +408,8 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
       summary: {
         ...period.attendanceSummary,
         present_days: round2(ctx.attendance.present_days),
+        half_days: round2(ctx.attendance.half_days),
+        half_day_units: round2(ctx.attendance.half_day_units),
         absent_days: round2(ctx.attendance.unpaid_leave_days),
         late_arrivals: Number(ctx.attendance.late_arrivals || 0),
         late_penalty_days: Number(ctx.attendance.late_penalty_days || 0),

@@ -41,6 +41,10 @@ const pickEmployeeSummary = (employee) => {
 };
 
 const toCompactPayrollResponse = (payroll) => {
+  const evaluatedAttendance =
+    payroll?.attendance_snapshot?.summary?.evaluated_attendance?.summary ||
+    payroll?.summary_snapshot?.evaluated_attendance?.summary ||
+    null;
   const taxAmount = Number(payroll?.deductions_breakdown?.tax?.amount || 0);
   const deductionsTotal = Number(payroll?.deductions_total || 0);
   const payableBonusItems = (payroll?.earnings_breakdown?.bonuses || [])
@@ -68,18 +72,30 @@ const toCompactPayrollResponse = (payroll) => {
     },
     attendance: {
       present_days: Number(payroll.present_days || 0),
+      half_days: Number(payroll?.summary_snapshot?.evaluated_attendance?.summary?.half_days || 0),
+      half_day_units: Number(payroll?.summary_snapshot?.evaluated_attendance?.summary?.half_day_units || 0),
       paid_leaves: Number(payroll.paid_leaves || 0),
       unpaid_leaves: Number(payroll.unpaid_leaves || 0),
       payable_days: Number(payroll.payable_days || 0),
-      overtime_hours: Number(payroll.overtime_hours || 0),
       late_arrivals: Number(payroll?.summary_snapshot?.late_arrivals || 0),
       proration_factor_percent: Number(payroll?.summary_snapshot?.proration_factor_percent || 0),
+      shift_tracking: payroll?.attendance_snapshot?.summary?.shift_tracking || null,
+      overtime_tracking: payroll?.attendance_snapshot?.summary?.overtime_tracking || null,
+      overtime_breakdown: payroll?.earnings_breakdown?.overtime ? {
+        approved_hours: Number(payroll.earnings_breakdown.overtime.approved_hours || 0),
+        unapproved_hours: Number(payroll.earnings_breakdown.overtime.unapproved_hours || 0),
+        approved_overtime_amount: Number(payroll.earnings_breakdown.overtime.approved_overtime_amount || 0),
+        unapproved_overtime_amount: Number(payroll.earnings_breakdown.overtime.unapproved_overtime_amount || 0),
+      } : null,
+      evaluated: evaluatedAttendance,
     },
     totals: {
       basic_salary: Number(payroll.basic_salary || 0),
       allowances_total: Number(payroll.allowances_total || 0),
       bonuses_total: Number(payroll.bonuses_total || 0),
-      overtime_amount: Number(payroll.overtime_amount || 0),
+      approved_overtime_amount: Number(payroll?.earnings_breakdown?.overtime?.approved_overtime_amount || 0),
+      unapproved_overtime_amount: Number(payroll?.earnings_breakdown?.overtime?.unapproved_overtime_amount || 0),
+      total_overtime_amount: Number(payroll.overtime_amount || 0),
       gross_salary: Number(payroll.gross_salary || 0),
       tax_amount: taxAmount,
       non_tax_deductions_total: Number((deductionsTotal - taxAmount).toFixed(2)),
@@ -99,6 +115,17 @@ const toCompactPayrollResponse = (payroll) => {
         amount: Number(item.amount || 0),
       })),
       ...(payableBonusItems.length ? { bonuses: payableBonusItems } : {}),
+      ...(payroll?.earnings_breakdown?.overtime ? { 
+        overtime: {
+          approved_hours: Number(payroll.earnings_breakdown.overtime.approved_hours || 0),
+          unapproved_hours: Number(payroll.earnings_breakdown.overtime.unapproved_hours || 0),
+          hourly_rate: Number(payroll.earnings_breakdown.overtime.hourly_rate || 0),
+          approved_rate_multiplier: Number(payroll.earnings_breakdown.overtime.approved_rate_multiplier || 1),
+          approved_overtime_amount: Number(payroll.earnings_breakdown.overtime.approved_overtime_amount || 0),
+          unapproved_overtime_amount: Number(payroll.earnings_breakdown.overtime.unapproved_overtime_amount || 0),
+          note: payroll.earnings_breakdown.overtime.note || null,
+        }
+      } : {}),
       deductions: (payroll?.deductions_breakdown?.items || []).map((item) => ({
         name: item.name,
         type: item.type,

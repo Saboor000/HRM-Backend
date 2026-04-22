@@ -2,6 +2,7 @@ import {
   createOvertimeRequestService,
   approveOvertimeRequestService,
   rejectOvertimeRequestService,
+  cancelOvertimeRequestService,
   getOvertimeRequestsService,
   getOvertimeRequestByIdService,
 } from "../../services/attendance/overtime-request.service.js";
@@ -87,6 +88,15 @@ export const rejectOvertimeRequest = async (req, res, next) => {
   try {
     const data = await rejectOvertimeRequestService(req.params.id, req.user.id);
     send(res, 200, "Overtime request rejected successfully", data);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const cancelOvertimeRequest = async (req, res, next) => {
+  try {
+    const data = await cancelOvertimeRequestService(req.params.id, req.user.id);
+    send(res, 200, "Overtime request cancelled successfully", data);
   } catch (err) {
     next(err);
   }

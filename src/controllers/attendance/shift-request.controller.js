@@ -2,6 +2,7 @@ import {
   createShiftChangeRequestService,
   approveShiftChangeRequestService,
   rejectShiftChangeRequestService,
+  cancelShiftChangeRequestService,
   getShiftChangeRequestsService,
   getShiftChangeRequestByIdService,
 } from "../../services/attendance/shift-request.service.js";
@@ -87,6 +88,15 @@ export const rejectShiftChangeRequest = async (req, res, next) => {
   try {
     const data = await rejectShiftChangeRequestService(req.params.id, req.user.id);
     send(res, 200, "Shift change request rejected successfully", data);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const cancelShiftChangeRequest = async (req, res, next) => {
+  try {
+    const data = await cancelShiftChangeRequestService(req.params.id, req.user.id);
+    send(res, 200, "Shift change request cancelled successfully", data);
   } catch (err) {
     next(err);
   }

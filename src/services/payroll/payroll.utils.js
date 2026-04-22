@@ -1,10 +1,21 @@
 export const error = (status, message) => Object.assign(new Error(message), { status });
 
 export const toDateOnly = (d) => {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  // Handle string dates (e.g., "2026-04-22")
+  if (typeof d === "string") {
+    return d.split("T")[0]; // Remove time portion if present
+  }
+  
+  // Handle Date objects
+  if (d instanceof Date) {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  
+  // Return null or empty string for invalid input
+  return null;
 };
 
 export const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;

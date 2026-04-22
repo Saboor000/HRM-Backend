@@ -12,6 +12,7 @@ import {
   getShiftChangeRequestById,
   approveShiftChangeRequest,
   rejectShiftChangeRequest,
+  cancelShiftChangeRequest,
 } from "../../controllers/attendance/shift-request.controller.js";
 import {
   createShiftChangeRequestSchema,
@@ -53,6 +54,11 @@ router.put(
   adminHr,
   validateShiftRequestId,
   rejectShiftChangeRequest,
+);
+router.put(
+  "/attendance/shift-requests/:id/cancel",
+  validateShiftRequestId,
+  cancelShiftChangeRequest,
 );
 
 export default router;

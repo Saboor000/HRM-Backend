@@ -1,5 +1,7 @@
 import { supabase } from "../../config/supabase.js";
 import { employeeByAuth } from "./assignment.service.js";
+import { getEmployeeLeavesInRange } from "./checkin-checkout.service.js";
+import { evaluateAttendanceRecord, resolveEmployeeAttendancePolicy } from "./evaluated-attendance.service.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
 const ATTENDANCE_SELECT = `
@@ -51,6 +53,35 @@ const applyDepartmentFilter = (query, department) =>
   department ? query.filter("employee.department", "eq", department) : query;
 const toTypedRecords = (records, type) => records.map((record) => ({ ...record, type }));
 const toDateOnly = (value) => (value ? new Date(value).toISOString().split("T")[0] : value);
+const round2 = (value) => Math.round(Number(value || 0) * 100) / 100;
+const getLeaveForDate = (leaveRows = [], date) => {
+  if (!date) return null;
+
+  return (
+    leaveRows.find((leave) => {
+      if (leave.leave_type === "full_day") {
+        return String(leave.start_date || "") <= String(date) && String(date) <= String(leave.end_date || leave.start_date || "");
+      }
+
+      return String(leave.start_date || "") === String(date);
+    }) || null
+  );
+};
+const withAttendanceWorkMetrics = (record) => {
+  const workedHours = round2(Number(record?.duration_hours || 0));
+  const shiftHours =
+    record?.shift?.duration_hours !== undefined && record?.shift?.duration_hours !== null
+      ? round2(Number(record.shift.duration_hours || 0))
+      : null;
+
+  return {
+    ...record,
+    worked_hours: workedHours,
+    shift_hours: shiftHours,
+    late_minutes: Math.max(0, Number(record?.late_minutes || 0)),
+    eligible_overtime_hours: round2(Number(record?.overtime_hours || 0)),
+  };
+};
 
 export const getDailyAttendanceReportService = async (date, department) => {
   try {
@@ -75,7 +106,9 @@ export const getDailyAttendanceReportService = async (date, department) => {
 
     const visibleLeaveData = filterLeaveRecordsAlreadyInAttendance(attendanceData, leaveData);
 
-    const allRecords = [...toTypedRecords(attendanceData, "attendance"), ...toTypedRecords(visibleLeaveData, "leave")];
+    const attendanceRecords = toTypedRecords(attendanceData, "attendance").map(withAttendanceWorkMetrics);
+    const leaveRecords = toTypedRecords(visibleLeaveData, "leave").map(withAttendanceWorkMetrics);
+    const allRecords = [...attendanceRecords, ...leaveRecords];
 
     const summary = {
       total_employees: new Set([
@@ -136,10 +169,12 @@ export const getWeeklyAttendanceReportService = async (weekOf, year) => {
           days: [],
         };
       }
-      groupedByEmployee[record.employee_id].days.push({
-        ...record,
-        type: "attendance",
-      });
+      groupedByEmployee[record.employee_id].days.push(
+        withAttendanceWorkMetrics({
+          ...record,
+          type: "attendance",
+        })
+      );
     });
 
     visibleLeaveData.forEach((leave) => {
@@ -149,10 +184,12 @@ export const getWeeklyAttendanceReportService = async (weekOf, year) => {
           days: [],
         };
       }
-      groupedByEmployee[leave.employee_id].days.push({
-        ...leave,
-        type: "leave",
-      });
+      groupedByEmployee[leave.employee_id].days.push(
+        withAttendanceWorkMetrics({
+          ...leave,
+          type: "leave",
+        })
+      );
     });
 
     return {
@@ -205,7 +242,9 @@ export const getMonthlyAttendanceReportService = async (month, year, department)
 
     const visibleLeaveData = filterLeaveRecordsAlreadyInAttendance(attendanceData, leaveData);
 
-    const allRecords = [...toTypedRecords(attendanceData, "attendance"), ...toTypedRecords(visibleLeaveData, "leave")];
+    const attendanceRecords = toTypedRecords(attendanceData, "attendance").map(withAttendanceWorkMetrics);
+    const leaveRecords = toTypedRecords(visibleLeaveData, "leave").map(withAttendanceWorkMetrics);
+    const allRecords = [...attendanceRecords, ...leaveRecords];
 
     const summary = {
       total_records: allRecords.length,
@@ -330,9 +369,88 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
   }
 };
 
+export const getCheckInCheckoutReportService = async (filters = {}) => {
+  try {
+    const page = Number.parseInt(filters.page, 10) || 1;
+    const limit = Number.parseInt(filters.limit, 10) || 10;
+    const from = (page - 1) * limit;
+
+    let query = supabase
+      .from("attendance_records")
+      .select(ATTENDANCE_SELECT, { count: "exact" })
+      .order("date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (filters.employee_id) {
+      query = query.eq("employee_id", filters.employee_id);
+    }
+    if (filters.date) {
+      query = query.eq("date", toDateOnly(filters.date));
+    }
+    if (filters.start_date) {
+      query = query.gte("date", toDateOnly(filters.start_date));
+    }
+    if (filters.end_date) {
+      query = query.lte("date", toDateOnly(filters.end_date));
+    }
+    if (filters.status) {
+      query = query.eq("status", filters.status);
+    }
+    if (filters.shift_id) {
+      query = query.eq("shift_id", filters.shift_id);
+    }
+    if (filters.department) {
+      query = query.filter("employee.department", "eq", filters.department);
+    }
+    if (filters.has_overtime === true) {
+      query = query.gt("overtime_hours", 0);
+    }
+    if (filters.has_overtime === false) {
+      query = query.lte("overtime_hours", 0);
+    }
+
+    const { data, error: err, count } = await query.range(from, from + limit - 1);
+    if (err) throw error(400, err.message);
+
+    const records = (data || []).map(withAttendanceWorkMetrics);
+    const summary = {
+      total_records: count || 0,
+      present: records.filter((r) => PRESENT_STATUSES.has(r.status)).length,
+      absent: records.filter((r) => ABSENT_STATUSES.has(r.status)).length,
+      on_leave: records.filter((r) => LEAVE_STATUSES.has(r.status)).length,
+      with_overtime: records.filter((r) => Number(r.overtime_hours || 0) > 0).length,
+    };
+
+    return {
+      filters: {
+        employee_id: filters.employee_id || null,
+        date: filters.date || null,
+        start_date: filters.start_date || null,
+        end_date: filters.end_date || null,
+        status: filters.status || null,
+        shift_id: filters.shift_id || null,
+        department: filters.department || null,
+        has_overtime: filters.has_overtime ?? null,
+      },
+      summary,
+      records,
+      pagination: {
+        page,
+        limit,
+        total: count || 0,
+        pages: Math.ceil((count || 0) / limit),
+      },
+    };
+  } catch (e) {
+    if (e.status) throw e;
+    throw error(400, e.message);
+  }
+};
+
 export const getMyAttendanceReportService = async (userId, filters = {}) => {
   try {
     const employee = await employeeByAuth(userId);
+    const attendancePolicy = await resolveEmployeeAttendancePolicy(employee.id);
     const page = Number.parseInt(filters.page, 10) || 1;
     const limit = Number.parseInt(filters.limit, 10) || 10;
     const from = (page - 1) * limit;
@@ -362,7 +480,51 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
     const { data, error: err, count } = await query.range(from, from + limit - 1);
     if (err) throw error(400, err.message);
 
-    const records = data || [];
+    const attendanceRows = data || [];
+    const dates = attendanceRows.map((record) => record.date).filter(Boolean).sort();
+    const startDate = filters.start_date ? toDateOnly(filters.start_date) : dates[0] || null;
+    const endDate = filters.end_date ? toDateOnly(filters.end_date) : dates[dates.length - 1] || startDate;
+    const leaveRows = startDate && endDate ? await getEmployeeLeavesInRange(employee.id, startDate, endDate) : [];
+
+    const records = attendanceRows.map((record) => {
+      const leaveRecord = getLeaveForDate(leaveRows, record.date);
+      const evaluation = evaluateAttendanceRecord({
+        date: record.date,
+        attendanceRecord: record,
+        leaveRecord,
+        attendancePolicy: attendancePolicy || {},
+      });
+
+      return {
+        ...withAttendanceWorkMetrics(record),
+        evaluation,
+      };
+    });
+
+    const evaluatedSummary = records.reduce(
+      (acc, record) => {
+        const status = record?.evaluation?.evaluated_status;
+        if (status === "present" || status === "off_day_worked") acc.present_days += 1;
+        if (status === "half_day") acc.half_days += 1;
+        if (status === "leave") acc.paid_leave_days += Number(record?.evaluation?.payable_day_fraction || 0);
+        if (status === "absent") acc.absent_days += 1;
+        if (status === "holiday") acc.holiday_days += 1;
+        if (status === "off_day") acc.off_days += 1;
+        if (record?.evaluation?.is_late) acc.late_arrivals += 1;
+        return acc;
+      },
+      {
+        total_working_days: attendanceRows.length,
+        present_days: 0,
+        half_days: 0,
+        paid_leave_days: 0,
+        absent_days: 0,
+        holiday_days: 0,
+        off_days: 0,
+        late_arrivals: 0,
+      }
+    );
+
     const summary = {
       total_records: count || 0,
       present: records.filter((r) => PRESENT_STATUSES.has(r.status)).length,
@@ -370,6 +532,19 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
       on_leave: records.filter((r) => LEAVE_STATUSES.has(r.status)).length,
       on_holiday: records.filter((r) => r.status === "holiday").length,
       total_worked_hours: Math.round(records.reduce((sum, r) => sum + Number(r.duration_hours || 0), 0) * 100) / 100,
+      evaluated: {
+        total_working_days: evaluatedSummary.total_working_days,
+        present_days: round2(evaluatedSummary.present_days),
+        half_days: round2(evaluatedSummary.half_days),
+        paid_leave_days: round2(evaluatedSummary.paid_leave_days),
+        absent_days: round2(evaluatedSummary.absent_days),
+        holiday_days: round2(evaluatedSummary.holiday_days),
+        off_days: round2(evaluatedSummary.off_days),
+        payable_days: round2(
+          evaluatedSummary.present_days + (evaluatedSummary.half_days * 0.5) + evaluatedSummary.paid_leave_days
+        ),
+        late_arrivals: round2(evaluatedSummary.late_arrivals),
+      },
     };
 
     return {
@@ -389,6 +564,339 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
         total: count || 0,
         pages: Math.ceil((count || 0) / limit),
       },
+    };
+  } catch (e) {
+    if (e.status) throw e;
+    throw error(400, e.message);
+  }
+};
+
+const toIsoDateInput = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().split("T")[0];
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().split("T")[0];
+};
+
+const defaultPeriodRange = (startDate, endDate) => {
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+
+  return {
+    start_date: toIsoDateInput(startDate) || firstDay,
+    end_date: toIsoDateInput(endDate) || lastDay,
+  };
+};
+
+const getRequesterProfile = async (authId) => {
+  const { data, error: err } = await supabase
+    .from("employees")
+    .select("id, auth_id, first_name, last_name, designation, department")
+    .eq("auth_id", authId)
+    .maybeSingle();
+
+  if (err) throw error(400, err.message);
+  if (!data) throw error(404, "Employee not found");
+  return data;
+};
+
+const countQuery = async (table, builder) => {
+  let query = supabase.from(table).select("id", { count: "exact", head: true });
+  if (builder) query = builder(query);
+  const { count, error: err } = await query;
+  if (err) throw error(400, err.message);
+  return count || 0;
+};
+
+const getAttendanceSummaryForRange = async (startDate, endDate, department) => {
+  let query = supabase
+    .from("attendance_records")
+    .select(ATTENDANCE_SELECT)
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .order("date", { ascending: true });
+
+  query = applyDepartmentFilter(query, department);
+
+  const { data, error: err } = await query;
+  if (err) throw error(400, err.message);
+
+  const records = data || [];
+  const dailyMap = {};
+  for (const record of records) {
+    const key = record.date;
+    if (!dailyMap[key]) {
+      dailyMap[key] = { date: key, present: 0, absent: 0, on_leave: 0, overtime_hours: 0 };
+    }
+    if (PRESENT_STATUSES.has(record.status)) dailyMap[key].present += 1;
+    if (ABSENT_STATUSES.has(record.status)) dailyMap[key].absent += 1;
+    if (LEAVE_STATUSES.has(record.status)) dailyMap[key].on_leave += 1;
+    dailyMap[key].overtime_hours += Number(record.overtime_hours || 0);
+  }
+
+  return {
+    records,
+    summary: {
+      total_records: records.length,
+      present: records.filter((r) => PRESENT_STATUSES.has(r.status)).length,
+      absent: records.filter((r) => ABSENT_STATUSES.has(r.status)).length,
+      on_leave: records.filter((r) => LEAVE_STATUSES.has(r.status)).length,
+      on_holiday: records.filter((r) => r.status === "holiday").length,
+      overtime_hours: Math.round(records.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0) * 100) / 100,
+    },
+    daily_trend: Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date)),
+  };
+};
+
+const getAdminDashboardData = async ({ start_date, end_date, department }) => {
+  const attendance = await getAttendanceSummaryForRange(start_date, end_date, department);
+
+  const [
+    totalEmployees,
+    pendingLeaves,
+    pendingOvertime,
+    pendingShiftChanges,
+    approvedLeaves,
+    approvedOvertime,
+    recentLeavesResult,
+    recentOvertimeResult,
+    recentShiftChangesResult,
+    departmentsResult,
+  ] = await Promise.all([
+    countQuery("employees"),
+    countQuery("leaves", (q) => q.eq("status", "pending")),
+    countQuery("overtime_requests", (q) => q.eq("status", "pending")),
+    countQuery("shift_change_requests", (q) => q.eq("status", "pending")),
+    countQuery("leaves", (q) => q.eq("status", "approved").gte("start_date", start_date).lte("start_date", end_date)),
+    countQuery("overtime_requests", (q) => q.eq("status", "approved").gte("date", start_date).lte("date", end_date)),
+    supabase.from("leaves").select(LEAVE_SELECT).order("submitted_at", { ascending: false }).limit(5),
+    supabase.from("overtime_requests").select("*, employee:employee_id(id, first_name, last_name, department)").order("created_at", { ascending: false }).limit(5),
+    supabase.from("shift_change_requests").select("*, employee:employee_id(id, first_name, last_name, department)").order("created_at", { ascending: false }).limit(5),
+    supabase.from("employees").select("department"),
+  ]);
+
+  if (recentLeavesResult.error) throw error(400, recentLeavesResult.error.message);
+  if (recentOvertimeResult.error) throw error(400, recentOvertimeResult.error.message);
+  if (recentShiftChangesResult.error) throw error(400, recentShiftChangesResult.error.message);
+  if (departmentsResult.error) throw error(400, departmentsResult.error.message);
+
+  const departments = (departmentsResult.data || []).reduce((acc, row) => {
+    const key = row.department || "Unknown";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    cards: {
+      total_employees: totalEmployees,
+      present_today: attendance.summary.present,
+      absent_today: attendance.summary.absent,
+      pending_approvals: pendingLeaves + pendingOvertime + pendingShiftChanges,
+    },
+    attendance: attendance.summary,
+    approvals: {
+      pending_leaves: pendingLeaves,
+      pending_overtime: pendingOvertime,
+      pending_shift_changes: pendingShiftChanges,
+    },
+    operations: {
+      approved_leaves: approvedLeaves,
+      approved_overtime_requests: approvedOvertime,
+    },
+    distribution: {
+      employees_by_department: departments,
+    },
+    trends: {
+      daily_attendance: attendance.daily_trend,
+    },
+    recent: {
+      leaves: recentLeavesResult.data || [],
+      overtime_requests: recentOvertimeResult.data || [],
+      shift_change_requests: recentShiftChangesResult.data || [],
+    },
+  };
+};
+
+const getEmployeeDashboardData = async ({ employeeId, start_date, end_date }) => {
+  const [
+    myAttendance,
+    pendingLeaves,
+    pendingOvertime,
+    pendingShiftChanges,
+    approvedUpcomingLeaves,
+    latestAttendance,
+  ] = await Promise.all([
+    getMyAttendanceReportService(employeeId, { start_date, end_date, page: 1, limit: 100 }),
+    countQuery("leaves", (q) => q.eq("employee_id", employeeId).eq("status", "pending")),
+    countQuery("overtime_requests", (q) => q.eq("employee_id", employeeId).eq("status", "pending")),
+    countQuery("shift_change_requests", (q) => q.eq("employee_id", employeeId).eq("status", "pending")),
+    supabase
+      .from("leaves")
+      .select("*")
+      .eq("employee_id", employeeId)
+      .eq("status", "approved")
+      .gte("start_date", new Date().toISOString().split("T")[0])
+      .order("start_date", { ascending: true })
+      .limit(5),
+    supabase
+      .from("attendance_records")
+      .select(ATTENDANCE_SELECT)
+      .eq("employee_id", employeeId)
+      .order("date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (approvedUpcomingLeaves.error) throw error(400, approvedUpcomingLeaves.error.message);
+  if (latestAttendance.error) throw error(400, latestAttendance.error.message);
+
+  return {
+    cards: {
+      present_days: myAttendance.summary.present,
+      absent_days: myAttendance.summary.absent,
+      leave_days: myAttendance.summary.on_leave,
+      pending_requests: pendingLeaves + pendingOvertime + pendingShiftChanges,
+    },
+    attendance: myAttendance.summary,
+    requests: {
+      pending_leaves: pendingLeaves,
+      pending_overtime: pendingOvertime,
+      pending_shift_changes: pendingShiftChanges,
+    },
+    latest: {
+      attendance: latestAttendance.data || null,
+    },
+    upcoming: {
+      approved_leaves: approvedUpcomingLeaves.data || [],
+    },
+    records: myAttendance.records,
+  };
+};
+
+export const getDashboardSummaryService = async ({ authId, startDate, endDate, department }) => {
+  try {
+    const requester = await getRequesterProfile(authId);
+    const { start_date, end_date } = defaultPeriodRange(startDate, endDate);
+    const role = requester.designation;
+
+    if (["admin", "hr", "manager"].includes(role)) {
+      const data = await getAdminDashboardData({ start_date, end_date, department: department || requester.department });
+      return {
+        role,
+        period: { start_date, end_date },
+        dashboard: data,
+      };
+    }
+
+    const data = await getEmployeeDashboardData({ employeeId: requester.id, start_date, end_date });
+    return {
+      role,
+      period: { start_date, end_date },
+      employee: requester,
+      dashboard: data,
+    };
+  } catch (e) {
+    if (e.status) throw e;
+    throw error(400, e.message);
+  }
+};
+
+export const getCombinedAttendanceAnalyticsService = async ({ authId, startDate, endDate, department }) => {
+  try {
+    const requester = await getRequesterProfile(authId);
+    const { start_date, end_date } = defaultPeriodRange(startDate, endDate);
+    const role = requester.designation;
+
+    if (["admin", "hr", "manager"].includes(role)) {
+      const attendance = await getAttendanceSummaryForRange(start_date, end_date, department || requester.department);
+
+      const [
+        totalEmployees,
+        leavesApproved,
+        leavesPending,
+        overtimeApproved,
+        overtimePending,
+        shiftChangesApproved,
+        shiftChangesPending,
+        activeShifts,
+        shiftAssignments,
+      ] = await Promise.all([
+        countQuery("employees"),
+        countQuery("leaves", (q) => q.eq("status", "approved").gte("start_date", start_date).lte("start_date", end_date)),
+        countQuery("leaves", (q) => q.eq("status", "pending")),
+        countQuery("overtime_requests", (q) => q.eq("status", "approved").gte("date", start_date).lte("date", end_date)),
+        countQuery("overtime_requests", (q) => q.eq("status", "pending")),
+        countQuery("shift_change_requests", (q) => q.eq("status", "approved").gte("request_date", start_date).lte("request_date", end_date)),
+        countQuery("shift_change_requests", (q) => q.eq("status", "pending")),
+        countQuery("shifts", (q) => q.eq("is_active", true)),
+        countQuery("employee_shift_assignments", (q) => q.eq("is_active", true)),
+      ]);
+
+      return {
+        role,
+        period: { start_date, end_date },
+        overview: {
+          total_employees: totalEmployees,
+          total_records: attendance.summary.total_records,
+          present: attendance.summary.present,
+          absent: attendance.summary.absent,
+          on_leave: attendance.summary.on_leave,
+          overtime_hours: attendance.summary.overtime_hours,
+        },
+        leaves: {
+          approved: leavesApproved,
+          pending: leavesPending,
+        },
+        overtime: {
+          approved_requests: overtimeApproved,
+          pending_requests: overtimePending,
+        },
+        shift_changes: {
+          approved: shiftChangesApproved,
+          pending: shiftChangesPending,
+        },
+        shifts: {
+          active_shifts: activeShifts,
+          active_assignments: shiftAssignments,
+        },
+        trends: {
+          daily_attendance: attendance.daily_trend,
+        },
+      };
+    }
+
+    const myAttendance = await getMyAttendanceReportService(requester.auth_id, {
+      start_date,
+      end_date,
+      page: 1,
+      limit: 100,
+    });
+
+    const [leavesPending, overtimePending, shiftChangesPending] = await Promise.all([
+      countQuery("leaves", (q) => q.eq("employee_id", requester.id).eq("status", "pending")),
+      countQuery("overtime_requests", (q) => q.eq("employee_id", requester.id).eq("status", "pending")),
+      countQuery("shift_change_requests", (q) => q.eq("employee_id", requester.id).eq("status", "pending")),
+    ]);
+
+    return {
+      role,
+      period: { start_date, end_date },
+      employee: requester,
+      overview: {
+        total_records: myAttendance.summary.total_records,
+        present: myAttendance.summary.present,
+        absent: myAttendance.summary.absent,
+        on_leave: myAttendance.summary.on_leave,
+        total_worked_hours: myAttendance.summary.total_worked_hours,
+      },
+      pending_requests: {
+        leaves: leavesPending,
+        overtime: overtimePending,
+        shift_changes: shiftChangesPending,
+      },
+      records: myAttendance.records,
     };
   } catch (e) {
     if (e.status) throw e;

@@ -8,6 +8,7 @@ import {
   getOvertimeRequestById,
   approveOvertimeRequest,
   rejectOvertimeRequest,
+  cancelOvertimeRequest,
 } from "../../controllers/attendance/overtime-request.controller.js";
 import {
   createOvertimeRequestSchema,
@@ -39,6 +40,11 @@ router.put(
   adminHr,
   validateOvertimeRequestId,
   rejectOvertimeRequest
+);
+router.put(
+  "/attendance/overtime-requests/:id/cancel",
+  validateOvertimeRequestId,
+  cancelOvertimeRequest
 );
 
 export default router;
