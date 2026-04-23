@@ -9,9 +9,10 @@ const line = (doc, label, value) => {
 };
 
 const componentLine = (doc, component) => {
+  const percentageValue = component.rate ?? component.applicable_rate ?? component.value;
   const type =
     component.type === "percentage"
-      ? `${component.value}%`
+      ? `${percentageValue ?? 0}%`
       : component.type === "slab"
         ? "slab"
         : money(component.value);
@@ -29,15 +30,17 @@ export const generatePayslipPdf = (payload, res) => {
   const deductions = payroll.deductions_breakdown || {};
   const summary = payroll.summary_snapshot || {};
   const period = payroll.period_snapshot || {};
+  const totalWorkingDays = Number(summary.total_days || period.working_days || 0);
+  const derivedPerDaySalary = totalWorkingDays > 0 ? Number(payroll.basic_salary || 0) / totalWorkingDays : 0;
 
   const payableBonuses = (earnings.bonuses || [])
     .filter((component) => Number(component.amount || 0) > 0);
 
   const getSummaryOrPayroll = (summaryKey, payrollKey) => summary[summaryKey] ?? payroll[payrollKey] ?? "-";
   const totals = {
-    full_month_basic_salary: payroll.basic_salary,
+    prorated_basic_salary: payroll.basic_salary,
     basic_salary: payroll.basic_salary,
-    per_day_salary: payroll.per_day_salary,
+    per_day_salary: payroll.per_day_salary ?? derivedPerDaySalary,
     allowances_total: payroll.allowances_total,
     bonuses_total: payroll.bonuses_total,
     overtime_amount: payroll.overtime_amount,
@@ -92,8 +95,8 @@ export const generatePayslipPdf = (payload, res) => {
   doc.moveDown(0.8);
   doc.fontSize(13).font("Helvetica-Bold").text("Earnings Calculation");
   doc.moveDown(0.25);
-  if (totals.full_month_basic_salary !== undefined) {
-    doc.font("Helvetica-Bold").text(`Full Month Basic Salary: ${money(totals.full_month_basic_salary)}`, { indent: 10 });
+  if (totals.prorated_basic_salary !== undefined) {
+    doc.font("Helvetica-Bold").text(`Prorated Basic Salary: ${money(totals.prorated_basic_salary)}`, { indent: 10 });
     if (summary.proration_factor_percent !== undefined && summary.proration_factor_percent < 100) {
       doc.font("Helvetica").text(
         `× ${summary.proration_factor_percent || 0}% (${summary.payable_days || 0} payable / ${summary.total_days || 0} working days)`,
@@ -139,7 +142,7 @@ export const generatePayslipPdf = (payload, res) => {
     const dailyRate = Number(totals.per_day_salary || 0);
     const dayLabel = payableDays === 1 ? "day" : "days";
     doc.fontSize(10).font("Helvetica").text(
-      `(${money(dailyRate)} basic per day × ${payableDays} payable ${dayLabel})`,
+      `(${money(dailyRate)} per working day × ${payableDays} payable ${dayLabel})`,
       { align: "center" }
     );
   }
