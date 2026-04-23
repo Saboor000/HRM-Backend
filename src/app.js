@@ -17,7 +17,27 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT;
 
-app.use(cors());
+const allowedOrigins = new Set([
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  process.env.FRONTEND_URL,
+].filter(Boolean));
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow non-browser requests (curl/Postman) where Origin header may be absent.
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("CORS policy: origin not allowed"));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 app.get("/", (req, res) => {
