@@ -129,7 +129,9 @@ const toCompactPayrollResponse = (payroll) => {
       deductions: (payroll?.deductions_breakdown?.items || []).map((item) => ({
         name: item.name,
         type: item.type,
-        value: Number(item.value || 0),
+        value: Number(item.value ?? item.rate ?? item.applicable_rate ?? 0),
+        rate: item.rate ?? null,
+        applicable_rate: item.applicable_rate ?? null,
         amount: Number(item.amount || 0),
       })),
     },
