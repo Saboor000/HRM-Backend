@@ -1,6 +1,8 @@
 import { supabase } from "../config/supabase.js";
 import { v4 as uuidv4 } from "uuid";
 
+const serviceError = (status, message) => Object.assign(new Error(message), { status });
+
 const parseMaybeJson = (value) => {
   if (value === undefined || value === null) return value;
   if (typeof value !== "string") return value;
@@ -155,6 +157,13 @@ const POLICY_TABLES = {
   bonus: "bonus_policies",
 };
 
+const POLICY_LINKED_SALARY_COLUMNS = {
+  [POLICY_TABLES.attendance]: "attendance_policy_id",
+  [POLICY_TABLES.overtime]: "overtime_policy_id",
+  [POLICY_TABLES.tax]: "tax_policy_id",
+  [POLICY_TABLES.bonus]: "bonus_policy_id",
+};
+
 const ATTENDANCE_TABLE = POLICY_TABLES.attendance;
 const normalizePolicyRecord = (tableName, record) =>
   tableName === ATTENDANCE_TABLE ? normalizeAttendancePolicyRecord(record) : record;
@@ -172,14 +181,29 @@ const createPolicy = async (tableName, policyData) => {
   return normalizePolicyRecord(tableName, data[0]);
 };
 
+const sanitizePolicyUpdatePayload = (policyData = {}) => {
+  const sanitized = { ...policyData };
+
+  // Protect immutable/system fields from accidental updates that can break FK references.
+  delete sanitized.id;
+  delete sanitized.created_at;
+
+  return sanitized;
+};
+
 const updatePolicy = async (tableName, id, policyData) => {
+  const updateData = sanitizePolicyUpdatePayload(policyData);
+
   const { data, error } = await supabase
     .from(tableName)
-    .update(policyData)
+    .update(updateData)
     .eq("id", id)
     .select("*")
     .single();
 
+  if (error?.code === "23503") {
+    throw serviceError(409, "Policy update blocked due to dependent salary structures");
+  }
   if (error) throw error;
   return normalizePolicyRecord(tableName, data);
 };
@@ -211,6 +235,23 @@ const listPolicies = async (tableName) => {
 };
 
 const deletePolicy = async (tableName, id) => {
+  const linkedColumn = POLICY_LINKED_SALARY_COLUMNS[tableName];
+  if (linkedColumn) {
+    const { count, error: countError } = await supabase
+      .from("salary_structures")
+      .select("id", { count: "exact", head: true })
+      .eq(linkedColumn, id);
+
+    if (countError) throw countError;
+
+    if ((count || 0) > 0) {
+      throw serviceError(
+        409,
+        `Cannot delete policy because it is linked to ${count} salary structure(s)`
+      );
+    }
+  }
+
   const { data, error } = await supabase
     .from(tableName)
     .delete()
@@ -218,6 +259,9 @@ const deletePolicy = async (tableName, id) => {
     .select("*")
     .single();
 
+  if (error?.code === "23503") {
+    throw serviceError(409, "Cannot delete policy because it is linked to salary structures");
+  }
   if (error) throw error;
   return data;
 };
