@@ -1,5 +1,6 @@
 import { supabase } from "../../config/supabase.js";
 import { employeeByAuth, getEmployeeCurrentShiftService } from "./assignment.service.js";
+import { resolveEmployeeAttendancePolicy } from "./evaluated-attendance.service.js";
 import {
   formatTimestampInTimezone,
   getDateInTimezone,
@@ -13,6 +14,7 @@ const ATTENDANCE_TIMEZONE = resolveTimezone(
   process.env.PAYROLL_POLICY_TIMEZONE,
   "Asia/Karachi"
 );
+const DEFAULT_EARLY_CHECK_IN_WINDOW_MINUTES = 15;
 const todayDate = () => getDateInTimezone(ATTENDANCE_TIMEZONE);
 const nowIso = () => new Date().toISOString();
 const withServiceError = (err) => {
@@ -53,6 +55,35 @@ const parseDbTimestamp = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 const round2 = (value) => Math.round(Number(value || 0) * 100) / 100;
+const getEarlyCheckInWindowMinutes = (attendancePolicy = {}) => {
+  const configuredWindow = Number(
+    attendancePolicy.early_check_in_window_minutes ??
+      process.env.ATTENDANCE_EARLY_CHECKIN_WINDOW_MINUTES ??
+      DEFAULT_EARLY_CHECK_IN_WINDOW_MINUTES
+  );
+
+  return Number.isFinite(configuredWindow)
+    ? Math.max(0, configuredWindow)
+    : DEFAULT_EARLY_CHECK_IN_WINDOW_MINUTES;
+};
+
+const enforceCheckInWindow = (shift, attendancePolicy, checkInTime) => {
+  const shiftStartMinutes = toClockMinutesInTimezone(shift?.start_time, ATTENDANCE_TIMEZONE);
+  const currentMinutes = toClockMinutesInTimezone(checkInTime, ATTENDANCE_TIMEZONE);
+
+  if (shiftStartMinutes === null || currentMinutes === null) return;
+
+  const earlyWindowMinutes = getEarlyCheckInWindowMinutes(attendancePolicy);
+  const earliestAllowedMinutes = shiftStartMinutes - earlyWindowMinutes;
+
+  if (currentMinutes < earliestAllowedMinutes) {
+    throw error(
+      409,
+      `Check-in is not allowed before the shift window opens (${earlyWindowMinutes} minute${earlyWindowMinutes === 1 ? "" : "s"} before shift start).`
+    );
+  }
+};
+
 const resolveOvertimePolicyForEmployee = async (employeeId) => {
   const { data: structure, error: structureErr } = await supabase
     .from("salary_structures")
@@ -155,11 +186,13 @@ const buildAttendanceResponse = (record, leaveRecord = null) => {
   const shiftHours = record?.shift?.duration_hours !== undefined && record?.shift?.duration_hours !== null
     ? round2(Number(record.shift.duration_hours || 0))
     : null;
-  const lateMinutes = Math.max(0, Number(record.late_minutes || 0));
+  // Remove raw late_minutes, only expose evaluation.late_minutes if present
+  // const lateMinutes = Math.max(0, Number(record.late_minutes || 0));
   const eligibleOvertimeHours = round2(Number(record.overtime_hours || 0));
 
+  const { late_minutes, ...rest } = record;
   return {
-    ...record,
+    ...rest,
     status: isPureLeaveRow ? ATTENDANCE_STATUS.ON_LEAVE : isWorkingOnLeave ? ATTENDANCE_STATUS.ON_LEAVE_WORKING : normalized,
     leave_override: Boolean(storedOverride || isWorkingOnLeave),
     punch_status: punchStatus,
@@ -168,10 +201,13 @@ const buildAttendanceResponse = (record, leaveRecord = null) => {
     check_out_time_local: formatTimestampInTimezone(record.check_out_time, ATTENDANCE_TIMEZONE),
     worked_hours: workedHours,
     shift_hours: shiftHours,
-    late_minutes: lateMinutes,
     eligible_overtime_hours: eligibleOvertimeHours,
     leave_id: leaveRecord?.id || null,
     leave_type: leaveRecord?.leave_type || null,
+    // Optionally, expose evaluation.late_minutes at top-level for convenience
+    ...(record.evaluation && typeof record.evaluation.late_minutes === 'number'
+      ? { late_minutes: record.evaluation.late_minutes }
+      : {}),
   };
 };
 
@@ -342,24 +378,25 @@ export const checkInService = async (userId, payload) => {
   try {
     const employee = await employeeByAuth(userId);
     const today = todayDate();
+    const attendancePolicy = await resolveEmployeeAttendancePolicy(employee.id);
     const leaveRecord = await checkLeaveConflict(employee.id, today);
     const existingToday = await getAttendanceForDate(employee.id, today);
+    const assignment = await getCurrentShift(employee.id, today);
 
     if (existingToday?.check_in_time && !existingToday.check_out_time) {
       throw error(409, "Already checked in. Please check out first.");
     }
 
     if (existingToday?.check_in_time && existingToday.check_out_time) {
-      const assignment = await getCurrentShift(employee.id, today);
-      requireShiftOrLeave(assignment, leaveRecord);
-      requireActiveShift(assignment?.shift);
-
-      return reopenCompletedSameDayRecord(existingToday, assignment, payload, leaveRecord);
+      throw error(409, "Attendance is already completed for today. Check-in is locked after check-out.");
     }
 
-    const assignment = await getCurrentShift(employee.id, today);
     requireShiftOrLeave(assignment, leaveRecord);
     requireActiveShift(assignment?.shift);
+
+    if (assignment?.shift) {
+      enforceCheckInWindow(assignment.shift, attendancePolicy, nowIso());
+    }
 
     const checkInTime = nowIso();
     const basePayload = {

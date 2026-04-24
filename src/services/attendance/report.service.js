@@ -74,12 +74,17 @@ const withAttendanceWorkMetrics = (record) => {
       ? round2(Number(record.shift.duration_hours || 0))
       : null;
 
+  // Remove raw late_minutes, only expose evaluation.late_minutes if present
+  const { late_minutes, ...rest } = record;
   return {
-    ...record,
+    ...rest,
     worked_hours: workedHours,
     shift_hours: shiftHours,
-    late_minutes: Math.max(0, Number(record?.late_minutes || 0)),
     eligible_overtime_hours: round2(Number(record?.overtime_hours || 0)),
+    // Optionally, expose evaluation.late_minutes at top-level for convenience
+    ...(record.evaluation && typeof record.evaluation.late_minutes === 'number'
+      ? { late_minutes: record.evaluation.late_minutes }
+      : {}),
   };
 };
 

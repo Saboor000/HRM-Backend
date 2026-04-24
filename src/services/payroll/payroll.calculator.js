@@ -23,6 +23,7 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
       overtime_hours: round2(period.attendanceSummary.overtime_hours),
       unapproved_overtime_hours: round2(period.attendanceSummary.shift_tracking?.working_hours_breakdown?.from_unapproved_overtime || 0),
       late_arrivals: Number(period.attendanceSummary.late_arrivals || 0),
+      late_arrivals_original: Number(period.attendanceSummary.late_arrivals || 0),
       late_penalty_days: 0,
     },
     payableDays: 0,
@@ -225,10 +226,17 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
   };
 
   const nonTaxDeductions = (salaryStructure.deductions || []).filter((component) => !isTaxComponent(component));
-  ctx.nonTaxDeductionItems = nonTaxDeductions.map((component) => ({
-    ...component,
-    amount: deductionComponentAmount(component),
-  }));
+  ctx.nonTaxDeductionItems = nonTaxDeductions.map((component) => {
+    // Remove fixed late fine deduction if late-to-unpaid-day policy is active
+    if (
+      (component.code === 'late_fine' || component.name?.toLowerCase().includes('late')) &&
+      Number(rules.attendance.late_count_for_unpaid_day || 0) > 1
+    ) {
+      // Policy is 'N late = 1 unpaid day', so do NOT apply fixed late fine
+      return { ...component, amount: 0 };
+    }
+    return { ...component, amount: deductionComponentAmount(component) };
+  });
   let nonTaxDeductionsTotal = round2(
     ctx.nonTaxDeductionItems.reduce((sum, component) => sum + Number(component.amount || 0), 0)
   );
