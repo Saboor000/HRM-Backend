@@ -272,37 +272,44 @@ const attachLinkedPolicies = async (salaryStructure, options = {}) => {
   };
 };
 
-const buildPayrollRow = (snapshot) => ({
-  employee_id: snapshot.employee.id,
-  salary_structure_id: snapshot.salary_structure.id,
-  month: snapshot.period.month,
-  year: snapshot.period.year,
-  total_days: snapshot.summary.total_days,
-  present_days: snapshot.summary.present_days,
-  paid_leaves: snapshot.summary.paid_leaves,
-  unpaid_leaves: snapshot.summary.unpaid_leaves,
-  payable_days: snapshot.summary.payable_days,
-  overtime_hours: snapshot.summary.overtime_hours,
-  basic_salary: snapshot.totals.basic_salary,
-  allowances_total: snapshot.totals.allowances_total,
-  bonuses_total: snapshot.totals.bonuses_total,
-  overtime_amount: snapshot.totals.overtime_amount,
-  gross_salary: snapshot.totals.gross_salary,
-  lop_amount: snapshot.totals.lop_amount ?? snapshot.totals.lop_deduction ?? 0,
-  deductions_total: snapshot.totals.deductions_total,
-  net_salary: snapshot.totals.net_salary,
-  status: "draft",
-  salary_structure_snapshot: snapshot.salaryStructureSnapshot,
-  attendance_snapshot: snapshot.attendanceSnapshot,
-  leave_snapshot: snapshot.leaveSnapshot,
-  earnings_breakdown: snapshot.earningsBreakdown,
-  deductions_breakdown: snapshot.deductionsBreakdown,
-  summary_snapshot: snapshot.summary,
-  period_snapshot: snapshot.period,
-  generated_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-  created_at: new Date().toISOString(),
-});
+const buildPayrollRow = (snapshot) => {
+  // Extract evaluated attendance summary if available
+  const evaluated = snapshot.summary?.evaluated || {};
+  return {
+    employee_id: snapshot.employee.id,
+    salary_structure_id: snapshot.salary_structure.id,
+    month: snapshot.period.month,
+    year: snapshot.period.year,
+    total_days: snapshot.summary.total_days,
+    present_days: evaluated.present_days ?? snapshot.summary.present_days,
+    half_days: evaluated.half_days ?? 0,
+    half_day_units: evaluated.half_day_units ?? evaluated.half_days ? evaluated.half_days * 0.5 : 0,
+    late_arrivals: evaluated.late_arrivals ?? 0,
+    paid_leaves: snapshot.summary.paid_leaves,
+    unpaid_leaves: snapshot.summary.unpaid_leaves,
+    payable_days: evaluated.payable_days ?? snapshot.summary.payable_days,
+    overtime_hours: snapshot.summary.overtime_hours ?? snapshot.summary.overtime_hours,
+    basic_salary: snapshot.totals.basic_salary,
+    allowances_total: snapshot.totals.allowances_total,
+    bonuses_total: snapshot.totals.bonuses_total,
+    overtime_amount: snapshot.totals.overtime_amount,
+    gross_salary: snapshot.totals.gross_salary,
+    lop_amount: snapshot.totals.lop_amount ?? snapshot.totals.lop_deduction ?? 0,
+    deductions_total: snapshot.totals.deductions_total,
+    net_salary: snapshot.totals.net_salary,
+    status: "draft",
+    salary_structure_snapshot: snapshot.salaryStructureSnapshot,
+    attendance_snapshot: snapshot.attendanceSnapshot,
+    leave_snapshot: snapshot.leaveSnapshot,
+    earnings_breakdown: snapshot.earningsBreakdown,
+    deductions_breakdown: snapshot.deductionsBreakdown,
+    summary_snapshot: snapshot.summary,
+    period_snapshot: snapshot.period,
+    generated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  };
+};
 
 const generatePayrollForEmployee = async (employeeId, month, year) => {
   const existing = await findExistingPayroll(employeeId, month, year);
