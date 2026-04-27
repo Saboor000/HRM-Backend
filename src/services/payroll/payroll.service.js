@@ -273,8 +273,10 @@ const attachLinkedPolicies = async (salaryStructure, options = {}) => {
 };
 
 const buildPayrollRow = (snapshot) => {
-  // Extract evaluated attendance summary if available
-  const evaluated = snapshot.summary?.evaluated || {};
+  const evaluated =
+    snapshot?.attendanceSnapshot?.summary?.evaluated_attendance?.summary ||
+    snapshot?.summary?.evaluated_attendance?.summary ||
+    {};
   return {
     employee_id: snapshot.employee.id,
     salary_structure_id: snapshot.salary_structure.id,
@@ -283,8 +285,8 @@ const buildPayrollRow = (snapshot) => {
     total_days: snapshot.summary.total_days,
     present_days: evaluated.present_days ?? snapshot.summary.present_days,
     half_days: evaluated.half_days ?? 0,
-    half_day_units: evaluated.half_day_units ?? evaluated.half_days ? evaluated.half_days * 0.5 : 0,
-    late_arrivals: evaluated.late_arrivals ?? 0,
+    half_day_units: evaluated.half_day_units ?? (evaluated.half_days ? evaluated.half_days * 0.5 : 0),
+    late_arrivals: evaluated.late_arrivals ?? snapshot.summary?.late_arrivals ?? 0,
     paid_leaves: snapshot.summary.paid_leaves,
     unpaid_leaves: snapshot.summary.unpaid_leaves,
     payable_days: evaluated.payable_days ?? snapshot.summary.payable_days,

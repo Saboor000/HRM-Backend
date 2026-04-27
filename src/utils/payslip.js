@@ -29,25 +29,32 @@ export const generatePayslipPdf = (payload, res) => {
   const earnings = payroll.earnings_breakdown || {};
   const deductions = payroll.deductions_breakdown || {};
   const summary = payroll.summary_snapshot || {};
-  const period = payroll.period_snapshot || {};
-  const totalWorkingDays = Number(summary.total_days || period.working_days || 0);
-  const derivedPerDaySalary = totalWorkingDays > 0 ? Number(payroll.basic_salary || 0) / totalWorkingDays : 0;
+  const attendance = payroll.attendance || {};
+  const period = payroll.period || payroll.period_snapshot || {};
+  const totalsSource = payroll.totals || {};
+  const totalWorkingDays = Number(
+    period.working_days || summary.total_days || payroll.total_days || 0
+  );
+  const derivedPerDaySalary = totalWorkingDays > 0
+    ? Number((totalsSource.basic_salary ?? payroll.basic_salary) || 0) / totalWorkingDays
+    : 0;
 
-  const payableBonuses = (earnings.bonuses || [])
+  const payableBonuses = ((components.bonuses || earnings.bonuses) || [])
     .filter((component) => Number(component.amount || 0) > 0);
 
-  const getSummaryOrPayroll = (summaryKey, payrollKey) => summary[summaryKey] ?? payroll[payrollKey] ?? "-";
+  const attendanceValue = (compactKey, summaryKey, payrollKey) =>
+    attendance[compactKey] ?? summary[summaryKey] ?? payroll[payrollKey] ?? "-";
   const totals = {
-    prorated_basic_salary: payroll.basic_salary,
-    basic_salary: payroll.basic_salary,
-    per_day_salary: payroll.per_day_salary ?? derivedPerDaySalary,
-    allowances_total: payroll.allowances_total,
-    bonuses_total: payroll.bonuses_total,
-    overtime_amount: payroll.overtime_amount,
-    gross_salary: payroll.gross_salary,
+    prorated_basic_salary: totalsSource.basic_salary ?? payroll.basic_salary,
+    basic_salary: totalsSource.basic_salary ?? payroll.basic_salary,
+    per_day_salary: totalsSource.per_day_salary ?? payroll.per_day_salary ?? derivedPerDaySalary,
+    allowances_total: totalsSource.allowances_total ?? payroll.allowances_total,
+    bonuses_total: totalsSource.bonuses_total ?? payroll.bonuses_total,
+    overtime_amount: totalsSource.total_overtime_amount ?? payroll.overtime_amount,
+    gross_salary: totalsSource.gross_salary ?? payroll.gross_salary,
     lop_deduction: payroll.lop_amount,
-    deductions_total: payroll.deductions_total,
-    net_salary: payroll.net_salary,
+    deductions_total: totalsSource.deductions_total ?? payroll.deductions_total,
+    net_salary: totalsSource.net_salary ?? payroll.net_salary,
   };
 
   const doc = new PDFDocument({ margin: 40, size: "A4" });
@@ -67,7 +74,7 @@ export const generatePayslipPdf = (payload, res) => {
   doc.fontSize(13).font("Helvetica-Bold").text("Employee Details");
   doc.moveDown(0.25);
   line(doc, "Employee", textOrDash(employeeName));
-  line(doc, "Employee ID", textOrDash(employee.employee_id || payroll.employee_id));
+  line(doc, "Employee ID", textOrDash(employee.id || payroll.employee_id));
   line(doc, "Designation", textOrDash(employee.designation));
   line(doc, "Department", textOrDash(employee.department));
   line(doc, "Month", `${payroll.month}/${payroll.year}`);
@@ -76,36 +83,44 @@ export const generatePayslipPdf = (payload, res) => {
   doc.moveDown(0.8);
   doc.fontSize(13).font("Helvetica-Bold").text("Attendance Summary");
   doc.moveDown(0.25);
-  line(doc, "Working Days", summary.total_days ?? period.working_days ?? "-");
-  line(doc, "Present Days", getSummaryOrPayroll("present_days", "present_days"));
-  line(doc, "Paid Leave Days", getSummaryOrPayroll("paid_leaves", "paid_leaves"));
-  line(doc, "Unpaid Leave Days", getSummaryOrPayroll("unpaid_leaves", "unpaid_leaves"));
-  line(doc, "Payable Days", summary.payable_days ?? "-");
-  if (summary.proration_factor_percent !== undefined) {
-    line(doc, "Salary Proration", `${summary.proration_factor_percent || 0}%`);
+  line(doc, "Working Days", period.working_days ?? summary.total_days ?? "-");
+  line(doc, "Present Days", attendanceValue("present_days", "present_days", "present_days"));
+  line(doc, "Half Days", attendanceValue("half_days", "half_days", "half_days"));
+  line(doc, "Paid Leave Days", attendanceValue("paid_leaves", "paid_leaves", "paid_leaves"));
+  line(doc, "Unpaid Leave Days", attendanceValue("unpaid_leaves", "unpaid_leaves", "unpaid_leaves"));
+  line(doc, "Payable Days", attendanceValue("payable_days", "payable_days", "payable_days"));
+  if (attendance.proration_factor_percent !== undefined || summary.proration_factor_percent !== undefined) {
+    line(doc, "Salary Proration", `${(attendance.proration_factor_percent ?? summary.proration_factor_percent ?? 0)}%`);
   }
-  if (summary.late_arrivals !== undefined) {
-    line(doc, "Late Arrivals", summary.late_arrivals);
+  if (attendance.late_arrivals !== undefined || summary.late_arrivals !== undefined) {
+    line(doc, "Late Arrivals", attendance.late_arrivals ?? summary.late_arrivals);
   }
   if (summary.late_penalty_days !== undefined) {
     line(doc, "Late Penalty Days", summary.late_penalty_days);
   }
-  line(doc, "Overtime Hours", getSummaryOrPayroll("overtime_hours", "overtime_hours"));
+  line(
+    doc,
+    "Overtime Hours",
+    attendance.overtime_breakdown
+      ? Number(attendance.overtime_breakdown.approved_hours || 0) + Number(attendance.overtime_breakdown.unapproved_hours || 0)
+      : attendanceValue("overtime_hours", "overtime_hours", "overtime_hours")
+  );
 
   doc.moveDown(0.8);
   doc.fontSize(13).font("Helvetica-Bold").text("Earnings Calculation");
   doc.moveDown(0.25);
   if (totals.prorated_basic_salary !== undefined) {
     doc.font("Helvetica-Bold").text(`Prorated Basic Salary: ${money(totals.prorated_basic_salary)}`, { indent: 10 });
-    if (summary.proration_factor_percent !== undefined && summary.proration_factor_percent < 100) {
+    if ((attendance.proration_factor_percent ?? summary.proration_factor_percent) !== undefined
+      && Number(attendance.proration_factor_percent ?? summary.proration_factor_percent) < 100) {
       doc.font("Helvetica").text(
-        `× ${summary.proration_factor_percent || 0}% (${summary.payable_days || 0} payable / ${summary.total_days || 0} working days)`,
+        `× ${(attendance.proration_factor_percent ?? summary.proration_factor_percent ?? 0)}% (${(attendance.payable_days ?? summary.payable_days ?? 0)} payable / ${(period.working_days ?? summary.total_days ?? 0)} working days)`,
         { indent: 20 }
       );
     }
   }
   componentLine(doc, { name: "Basic Salary", type: "fixed", value: totals.basic_salary, amount: totals.basic_salary });
-  for (const component of earnings.allowances || []) componentLine(doc, component);
+  for (const component of components.allowances || earnings.allowances || []) componentLine(doc, component);
   for (const component of payableBonuses) componentLine(doc, component);
   componentLine(
     doc,
@@ -137,8 +152,10 @@ export const generatePayslipPdf = (payload, res) => {
   doc.fontSize(13).font("Helvetica-Bold").text("Monthly Salary Summary", { underline: true });
   doc.moveDown(0.25);
   doc.fontSize(11).font("Helvetica-Bold").text(`Total Salary for Month: ${money(totals.net_salary)}`, { align: "center" });
-  if (summary.payable_days !== undefined && summary.total_days !== undefined) {
-    const payableDays = Number(summary.payable_days || 0);
+  const payableDaysForSummary = Number(attendance.payable_days ?? summary.payable_days ?? 0);
+  const workingDaysForSummary = Number(period.working_days ?? summary.total_days ?? 0);
+  if (payableDaysForSummary > 0 && workingDaysForSummary > 0) {
+    const payableDays = payableDaysForSummary;
     const dailyRate = Number(totals.per_day_salary || 0);
     const dayLabel = payableDays === 1 ? "day" : "days";
     doc.fontSize(10).font("Helvetica").text(
@@ -150,14 +167,14 @@ export const generatePayslipPdf = (payload, res) => {
   doc.moveDown(0.8);
   doc.fontSize(13).font("Helvetica-Bold").text("Leave Summary");
   doc.moveDown(0.25);
-  line(doc, "Paid Leaves", getSummaryOrPayroll("paid_leaves", "paid_leaves"));
-  line(doc, "Unpaid Leaves", getSummaryOrPayroll("unpaid_leaves", "unpaid_leaves"));
-  line(doc, "Payable Days", summary.payable_days ?? "-");
+  line(doc, "Paid Leaves", attendanceValue("paid_leaves", "paid_leaves", "paid_leaves"));
+  line(doc, "Unpaid Leaves", attendanceValue("unpaid_leaves", "unpaid_leaves", "unpaid_leaves"));
+  line(doc, "Payable Days", attendanceValue("payable_days", "payable_days", "payable_days"));
 
   doc.moveDown(1);
   doc.fontSize(9).fillColor("#666666")
     .text("This payslip is generated from stored payroll snapshots and does not recalculate historical salary data.");
-  doc.text("Salary is prorated based on payable days (present days + paid leave days).");
+  doc.text("Salary is prorated based on payable days (present days + half-day units + paid leave days).");
 
   doc.end();
   return res;

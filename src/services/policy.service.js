@@ -92,7 +92,7 @@ const normalizeTaxPolicyPayload = (policyData = {}) => {
   }
 
   if (normalized.tax_mode_default === "slab") {
-    normalized.tax_rate_default = null;
+    normalized.tax_rate_default = 0;
   }
 
   return normalized;

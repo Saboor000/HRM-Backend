@@ -71,15 +71,14 @@ const toCompactPayrollResponse = (payroll) => {
       working_days: Number(payroll?.period_snapshot?.working_days || payroll.total_days || 0),
     },
     attendance: {
-      // Show present_days as present + half_days for display (if checked in), but keep half_days separate for payroll calculation
-      present_days: (evaluatedAttendance ? ((evaluatedAttendance.present_days || 0) + (evaluatedAttendance.half_days || 0)) : Number(payroll.present_days || 0)),
+      present_days: evaluatedAttendance?.present_days ?? Number(payroll.present_days || 0),
       half_days: evaluatedAttendance?.half_days ?? 0,
       half_day_units: evaluatedAttendance?.half_day_units ?? (evaluatedAttendance?.half_days ? evaluatedAttendance.half_days * 0.5 : 0),
       paid_leaves: evaluatedAttendance?.paid_leave_days ?? Number(payroll.paid_leaves || 0),
       unpaid_leaves: evaluatedAttendance?.unpaid_leave_days ?? Number(payroll.unpaid_leaves || 0),
       payable_days: evaluatedAttendance?.payable_days ?? Number(payroll.payable_days || 0),
-      late_arrivals: payroll?.attendance?.late_arrivals_original ?? evaluatedAttendance?.late_arrivals ?? 0,
-      late_arrivals_original: payroll?.attendance?.late_arrivals_original ?? evaluatedAttendance?.late_arrivals ?? 0,
+      late_arrivals: evaluatedAttendance?.late_arrivals ?? Number(payroll?.late_arrivals || 0),
+      late_arrivals_original: evaluatedAttendance?.late_arrivals ?? Number(payroll?.late_arrivals || 0),
       proration_factor_percent: Number(payroll?.summary_snapshot?.proration_factor_percent || 0),
       shift_tracking: payroll?.attendance_snapshot?.summary?.shift_tracking || null,
       overtime_tracking: payroll?.attendance_snapshot?.summary?.overtime_tracking || null,
@@ -298,7 +297,7 @@ export const approvePayroll = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Payroll approved successfully",
-      payroll,
+      payroll: toCompactPayrollResponse(payroll),
     });
   } catch (err) {
     return handleError(res, err);
@@ -312,7 +311,7 @@ export const markPayrollPaid = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Payroll marked as paid successfully",
-      payroll,
+      payroll: toCompactPayrollResponse(payroll),
     });
   } catch (err) {
     return handleError(res, err);
@@ -325,7 +324,13 @@ export const getPayslip = async (req, res) => {
 
     await enforceEmployeeSelfAccess(req, data.payroll.employee_id);
 
-    return generatePayslipPdf(data, res);
+    return generatePayslipPdf(
+      {
+        ...data,
+        payroll: toCompactPayrollResponse(data.payroll),
+      },
+      res
+    );
   } catch (err) {
     return handleError(res, err);
   }
