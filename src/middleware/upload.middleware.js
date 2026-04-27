@@ -11,6 +11,7 @@ const fileTypeByField = {
   profilePic: ["image/jpeg", "image/png", "image/webp"],
   contract: ["application/pdf"],
   otherDocs: ["application/pdf", "image/jpeg", "image/png"],
+  supporting_documents: ["application/pdf", "image/jpeg", "image/png"],
 };
 
 const fileFilter = (req, file, cb) => {

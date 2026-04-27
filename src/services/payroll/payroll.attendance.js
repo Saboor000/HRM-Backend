@@ -1,30 +1,8 @@
 import { supabase } from "../../config/supabase.js";
-import { resolveTimezone, toClockMinutesInTimezone } from "../../utils/timezone.js";
 import { applyOvertimeConstraints, evaluateOvertimeFromAttendance, separateApprovedOvertimeByApproval } from "./payroll.overtime.js";
-import { DEFAULT_POLICY_TIMEZONE, LATE_ARRIVAL_PENALTY_STEP, error, getPeriodBounds, isBusinessDay, round2, toDateOnly } from "./payroll.utils.js";
+import { LATE_ARRIVAL_PENALTY_STEP, error, getPeriodBounds, isBusinessDay, round2, toDateOnly } from "./payroll.utils.js";
 import { evaluateAttendancePeriod } from "../attendance/evaluated-attendance.service.js";
-
-const getLeaveUnit = (leave, leaveRules = {}) => {
-  const halfDayUnit = Number(leaveRules.half_day_unit ?? 0.5);
-  const hoursPerDayForShortLeave = Number(leaveRules.short_leave_hours_per_day ?? 8);
-
-  if (leave.leave_type === "half_day") return halfDayUnit;
-  if (leave.leave_type === "short_leave") {
-    if (leave.total_hours !== null && leave.total_hours !== undefined) {
-      return round2(Number(leave.total_hours || 0) / hoursPerDayForShortLeave);
-    }
-
-    const startTime = leave.start_time || "00:00";
-    const endTime = leave.end_time || "00:00";
-    const [startHour, startMinute] = startTime.split(":").map(Number);
-    const [endHour, endMinute] = endTime.split(":").map(Number);
-    return round2(
-      Math.max(0, ((endHour * 60 + endMinute) - (startHour * 60 + startMinute)) / 60 / hoursPerDayForShortLeave)
-    );
-  }
-
-  return 1;
-};
+import { getApprovedRegularizationsForAttendanceIds } from "../attendance/late-regularization.service.js";
 
 const groupAttendanceByDate = (attendanceRows, attendanceRules = {}) => {
   const map = new Map();
@@ -96,105 +74,6 @@ const resolveShiftAssignmentByDate = (assignments = [], workingDates = []) => {
   return resolved;
 };
 
-const countShiftBasedLateArrivals = ({ attendanceByDate, shiftByDate, attendanceRules = {} }) => {
-  const defaultGraceMinutes = Number(attendanceRules.grace_minutes_default ?? 0);
-  const shiftGraceById = attendanceRules.shift_grace_by_shift_id || {};
-  const shiftGraceByName = attendanceRules.shift_grace_by_shift_name || {};
-  const policyTimezone = resolveTimezone(
-    attendanceRules.timezone,
-    process.env.PAYROLL_POLICY_TIMEZONE,
-    process.env.ATTENDANCE_TIMEZONE,
-    DEFAULT_POLICY_TIMEZONE
-  );
-
-  let lateCount = 0;
-  const details = [];
-
-  for (const [day, attendance] of attendanceByDate.entries()) {
-    if (!attendance?.check_in_time) continue;
-
-    const assignment = shiftByDate.get(day);
-    const shift = assignment?.shift || null;
-    const shiftStart = shift?.start_time || null;
-    const shiftStartMinutes = toClockMinutesInTimezone(shiftStart, policyTimezone);
-    const checkInMinutes = toClockMinutesInTimezone(attendance.check_in_time, policyTimezone);
-
-    if (shiftStartMinutes === null || checkInMinutes === null) continue;
-
-    const shiftGrace =
-      shift?.id && shiftGraceById[shift.id] !== undefined
-        ? Number(shiftGraceById[shift.id])
-        : shift?.name && shiftGraceByName[shift.name] !== undefined
-          ? Number(shiftGraceByName[shift.name])
-          : defaultGraceMinutes;
-
-    const allowedMinutes = shiftStartMinutes + Math.max(0, shiftGrace);
-    const isLate = checkInMinutes > allowedMinutes;
-    if (isLate) lateCount += 1;
-
-    details.push({
-      day,
-      shift_id: shift?.id || null,
-      shift_name: shift?.name || null,
-      shift_start: shiftStart,
-      grace_minutes: Math.max(0, shiftGrace),
-      check_in_time: attendance.check_in_time,
-      comparison_timezone: policyTimezone,
-      is_late: isLate,
-    });
-  }
-
-  return {
-    count: lateCount,
-    details,
-    policy: {
-      grace_minutes_default: defaultGraceMinutes,
-      timezone: policyTimezone,
-      shift_grace_by_shift_id: shiftGraceById,
-      shift_grace_by_shift_name: shiftGraceByName,
-    },
-  };
-};
-
-const applySandwichLeaveAdjustments = ({ dayStats, workingDates, leaveRules = {} }) => {
-  const sandwichEnabled = Boolean(leaveRules.sandwich_enabled);
-  if (!sandwichEnabled) {
-    return { added_unpaid_days: 0, sandwich_days: [], policy: { sandwich_enabled: false } };
-  }
-
-  const sandwichDays = [];
-
-  for (let i = 1; i < workingDates.length - 1; i += 1) {
-    const day = workingDates[i];
-    const prev = dayStats.get(workingDates[i - 1]);
-    const current = dayStats.get(day);
-    const next = dayStats.get(workingDates[i + 1]);
-
-    if (!prev || !current || !next) continue;
-
-    const prevOnLeave = prev.leave_unit > 0;
-    const nextOnLeave = next.leave_unit > 0;
-    const currentWorked = current.present_portion > 0;
-
-    if (prevOnLeave && nextOnLeave && !currentWorked && current.leave_unit === 0) {
-      const before = current.unpaid_portion;
-      current.unpaid_portion = 1;
-      current.sandwich_applied = true;
-      if (before < 1) {
-        sandwichDays.push(day);
-      }
-    }
-  }
-
-  return {
-    added_unpaid_days: round2(sandwichDays.length),
-    sandwich_days: sandwichDays,
-    policy: {
-      sandwich_enabled: true,
-    },
-  };
-};
-
 export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollRules = {}) => {
   const attendanceRules = payrollRules?.attendance || {};
   const bounds = getPeriodBounds(month, year, attendanceRules);
@@ -250,11 +129,16 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
 
   const attendanceByDate = groupAttendanceByDate(attendanceRows, attendanceRules);
   const leaveByDate = groupLeavesByDate(leaveRows, bounds.workingDates);
+  const leaveById = new Map((leaveRows || []).map((leave) => [String(leave.id), leave]));
   const shiftByDate = resolveShiftAssignmentByDate(assignmentsRows || [], bounds.workingDates);
+  const regularizationByAttendanceId = await getApprovedRegularizationsForAttendanceIds(
+    (attendanceRows || []).map((row) => row.id).filter(Boolean)
+  );
   const attendanceEvaluation = evaluateAttendancePeriod({
     attendanceRows: attendanceRows || [],
     leaveRows: leaveRows || [],
     assignmentsRows: assignmentsRows || [],
+    regularizationByAttendanceId,
     periodBounds: bounds,
     attendancePolicy: attendanceRules,
     leaveRules: payrollRules?.leave || {},
@@ -263,10 +147,7 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
     count: Number(attendanceEvaluation.summary.late_arrivals || 0),
     details: attendanceEvaluation.evaluations.filter((entry) => entry.is_late),
     policy: {
-      timezone: attendanceRules.timezone || DEFAULT_POLICY_TIMEZONE,
-      grace_minutes_default: Number(attendanceRules.grace_minutes_default || 0),
-      shift_grace_by_shift_id: attendanceRules.shift_grace_by_shift_id || {},
-      shift_grace_by_shift_name: attendanceRules.shift_grace_by_shift_name || {},
+      source: "attendance_evaluation",
     },
   };
   
@@ -292,72 +173,71 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
   }));
   const overtimeEvaluation = applyOvertimeConstraints(approvedOvertimeRows, payrollRules?.overtime || {});
 
-  const dayStats = new Map();
+  const evaluationByDate = new Map(
+    (attendanceEvaluation?.evaluations || []).map((entry) => [String(entry.date), entry])
+  );
 
   let presentDays = 0;
   let halfDays = 0;
+  let halfDayUnits = 0;
   let paidLeaveDays = 0;
   let unpaidLeaveDays = 0;
 
   for (const day of bounds.workingDates) {
-    const attendance = attendanceByDate.get(day);
-    const leave = leaveByDate.get(day);
-    // Payroll presence is determined ONLY by check_in_time, not by status.
-    // This ensures any check-in (regardless of status: online, offline, etc.) counts as present.
-    const hasPunch = Boolean(attendance?.check_in_time);
-    const leaveUnit = leave ? Math.min(1, Math.max(0, getLeaveUnit(leave, payrollRules?.leave || {}))) : 0;
+    const evaluation = evaluationByDate.get(String(day)) || null;
+    const payableFraction = round2(Number(evaluation?.payable_day_fraction || 0));
+    const leaveId = evaluation?.leave_id ? String(evaluation.leave_id) : null;
+    const leave = leaveId ? leaveById.get(leaveId) : null;
+    const isPaidLeave = leaveId ? isLeavePaidByPolicy(leave) : false;
 
-    let presentPortion = 0;
-    let paidPortion = 0;
-    let unpaidPortion = 0;
-
-    if (hasPunch) {
-      presentPortion = 1;
-    } else if (!leave) {
-      unpaidPortion = 1;
-    } else {
-      const isPaidLeave = isLeavePaidByPolicy(leave);
+    if (leaveId) {
       if (isPaidLeave) {
-        paidPortion += leaveUnit;
-      } else {
-        unpaidPortion += leaveUnit;
+        paidLeaveDays += payableFraction;
       }
-      if (leaveUnit < 1) {
-        unpaidPortion += round2(1 - leaveUnit);
+      unpaidLeaveDays += round2(1 - payableFraction);
+    } else {
+      if (payableFraction >= 1) {
+        presentDays += 1;
+      } else if (payableFraction === 0.5) {
+        halfDays += 1;
+        halfDayUnits += 0.5;
       }
+      unpaidLeaveDays += round2(1 - payableFraction);
     }
-
-    dayStats.set(day, {
-      day,
-      leave_unit: leaveUnit,
-      present_portion: round2(presentPortion),
-      paid_portion: round2(paidPortion),
-      unpaid_portion: round2(unpaidPortion),
-      sandwich_applied: false,
-      has_punch: hasPunch,
-      leave_id: leave?.id || null,
-      // NOTE: present_portion is set ONLY by check_in_time, not by status.
-    });
   }
-
-  presentDays = Number(attendanceEvaluation.summary.present_days || 0);
-  halfDays = Number(attendanceEvaluation.summary.half_days || 0);
-  paidLeaveDays = Number(attendanceEvaluation.summary.paid_leave_days || 0);
-  unpaidLeaveDays = Number(attendanceEvaluation.summary.unpaid_leave_days || 0);
-
-  const sandwichEvaluation = applySandwichLeaveAdjustments({
-    dayStats,
-    workingDates: bounds.workingDates,
-    leaveRules: payrollRules?.leave || {},
-  });
-
-  const sandwichAddedUnpaidDays = Number(sandwichEvaluation.added_unpaid_days || 0);
-  unpaidLeaveDays += sandwichAddedUnpaidDays;
 
   const overtimeHours = overtimeEvaluation.accepted_hours;
   const lateArrivals = Number(attendanceEvaluation.summary.late_arrivals || 0);
-  const halfDayUnits = Number(attendanceEvaluation.summary.half_day_units || 0);
-  const payableDays = Math.max(0, Number(attendanceEvaluation.summary.payable_days || 0) - sandwichAddedUnpaidDays);
+  const payableDays = round2(
+    (attendanceEvaluation?.evaluations || []).reduce(
+      (sum, row) => sum + Number(row?.payable_day_fraction || 0),
+      0
+    )
+  );
+  const derivedPayableFromCounters = round2(presentDays + halfDayUnits + paidLeaveDays);
+  const payableMismatch = Math.abs(payableDays - derivedPayableFromCounters) > 0.01;
+  const totalAccountedUnits = round2(derivedPayableFromCounters + unpaidLeaveDays);
+  const dayUnitMismatch = Math.abs(totalAccountedUnits - Number(bounds.workingDays || 0)) > 0.01;
+  if (payableMismatch) {
+    console.warn("[payroll-alignment] payable day mismatch detected", {
+      employee_id: employeeId,
+      month,
+      year,
+      payable_from_evaluation: payableDays,
+      payable_from_counters: derivedPayableFromCounters,
+    });
+  }
+  if (dayUnitMismatch) {
+    console.warn("[payroll-alignment] day-unit mismatch detected", {
+      employee_id: employeeId,
+      month,
+      year,
+      working_days: Number(bounds.workingDays || 0),
+      accounted_day_units: totalAccountedUnits,
+      payable_from_counters: derivedPayableFromCounters,
+      unpaid_leave_days: round2(unpaidLeaveDays),
+    });
+  }
 
   // Track shift hours, working hours, and overtime hours
   const totalShiftHours = round2(
@@ -368,7 +248,10 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
   );
   
   const totalWorkingHours = round2(
-    (attendanceRows || []).reduce((sum, row) => sum + Number(row.duration_hours || 0), 0)
+    (attendanceEvaluation?.evaluations || []).reduce(
+      (sum, row) => sum + Number(row?.worked_hours || 0),
+      0
+    )
   );
   
   const totalUnapprovedOvertime = round2(overtimeApprovalSplit.summary.total_unapproved_overtime || 0);
@@ -376,6 +259,17 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
 
   // Filter attendanceRows for this employee and working days, and include all records
   const filteredAttendanceRows = (attendanceRows || []).filter(r => r.employee_id === employeeId || !r.employee_id);
+  const evaluatedSummaryForPayroll = {
+    ...(attendanceEvaluation?.summary || {}),
+    total_working_days: bounds.workingDays,
+    present_days: round2(presentDays),
+    half_days: round2(halfDays),
+    half_day_units: round2(halfDayUnits),
+    paid_leave_days: round2(paidLeaveDays),
+    unpaid_leave_days: round2(unpaidLeaveDays),
+    payable_days: round2(payableDays),
+    late_arrivals: round2(lateArrivals),
+  };
   
   // Build overtime rows for return (approved overtime rows + metadata about approvals)
   const overtimeRowsForReturn = approvedOvertimeRows.map(row => ({
@@ -404,6 +298,7 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
       present_days: round2(presentDays),
       half_days: round2(halfDays),
       half_day_units: round2(halfDayUnits),
+      paid_leave_days: round2(paidLeaveDays),
       absent_days: round2(unpaidLeaveDays),
       payable_days: round2(payableDays),
       shift_tracking: {
@@ -430,16 +325,27 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
         ),
         applied_unpaid_days_from_late: 0,
       },
+      regularization_summary: {
+        approved_regularizations_applied: Number(attendanceEvaluation?.summary?.approved_regularizations_applied || 0),
+      },
+      alignment_validation: {
+        payable_from_attendance_evaluation: payableDays,
+        payable_from_payroll_counters: derivedPayableFromCounters,
+        mismatch_detected: payableMismatch,
+        working_days: Number(bounds.workingDays || 0),
+        accounted_day_units: totalAccountedUnits,
+        day_unit_mismatch_detected: dayUnitMismatch,
+      },
       late_evaluation: lateEvaluation,
       evaluated_attendance: {
-        summary: attendanceEvaluation.summary,
+        summary: evaluatedSummaryForPayroll,
         records: attendanceEvaluation.evaluations,
       },
       overtime_policy: overtimeEvaluation.policy,
       overtime_violations: overtimeEvaluation.violations,
-      sandwich_policy: sandwichEvaluation.policy,
-      sandwich_days: sandwichEvaluation.sandwich_days,
-      sandwich_added_unpaid_days: sandwichEvaluation.added_unpaid_days,
+      sandwich_policy: { disabled_in_payroll_layer: true, source_of_truth: "attendance_evaluation" },
+      sandwich_days: [],
+      sandwich_added_unpaid_days: 0,
     },
     leaveSummary: {
       paid_leave_days: round2(paidLeaveDays),

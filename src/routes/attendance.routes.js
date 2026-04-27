@@ -6,6 +6,7 @@ import checkInCheckOutRoutes from "./attendance/checkin-checkout.routes.js";
 import shiftRequestRoutes from "./attendance/shift-request.routes.js";
 import overtimeRequestRoutes from "./attendance/overtime-request.routes.js";
 import reportRoutes from "./attendance/report.routes.js";
+import lateRegularizationRoutes from "./attendance/late-regularization.routes.js";
 
 const attendanceRouter = Router();
 const attendanceModules = [
@@ -15,6 +16,7 @@ const attendanceModules = [
   shiftRequestRoutes,
   overtimeRequestRoutes,
   reportRoutes,
+  lateRegularizationRoutes,
 ];
 
 attendanceRouter.use(protect);

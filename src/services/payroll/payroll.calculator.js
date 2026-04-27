@@ -1,6 +1,6 @@
 import { isBonusEligible } from "./payroll.bonus.js";
 import { getPayrollRulesConfig } from "./payroll.rules.js";
-import { getComponentAmount, getComponentTotal, LATE_ARRIVAL_PENALTY_STEP, normalizeNumeric, round2 } from "./payroll.utils.js";
+import { getComponentAmount, getComponentTotal, normalizeNumeric, round2 } from "./payroll.utils.js";
 import { isTaxComponent, resolveTaxDeduction } from "./payroll.tax.js";
 
 export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
@@ -62,33 +62,23 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
   ctx.perDaySalary = ctx.workingDays > 0 ? round2(ctx.basicSalaryFull / ctx.workingDays) : 0;
   recordAudit("attendance_evaluation", {
     present_days: ctx.attendance.present_days,
+    half_days: ctx.attendance.half_days,
+    half_day_units: ctx.attendance.half_day_units,
     paid_leave_days: ctx.attendance.paid_leave_days,
     unpaid_leave_days: ctx.attendance.unpaid_leave_days,
+    payable_days_from_attendance: round2(period.attendanceSummary.payable_days || 0),
     late_arrivals: ctx.attendance.late_arrivals,
   });
 
-  const lateStep = Math.max(1, Number(rules.attendance.late_count_for_unpaid_day || LATE_ARRIVAL_PENALTY_STEP));
-  const computedLatePenaltyDays = Math.floor(ctx.attendance.late_arrivals / lateStep);
-  const availablePayableForPenalty = round2(ctx.attendance.present_days + ctx.attendance.paid_leave_days);
-  const appliedLatePenaltyDays = Math.min(computedLatePenaltyDays, availablePayableForPenalty);
-
-  if (appliedLatePenaltyDays > 0) {
-    const deductFromPresent = Math.min(ctx.attendance.present_days, appliedLatePenaltyDays);
-    ctx.attendance.present_days = round2(ctx.attendance.present_days - deductFromPresent);
-    const remainingPenalty = round2(appliedLatePenaltyDays - deductFromPresent);
-    if (remainingPenalty > 0) {
-      ctx.attendance.paid_leave_days = round2(Math.max(0, ctx.attendance.paid_leave_days - remainingPenalty));
-    }
-    ctx.attendance.unpaid_leave_days = round2(ctx.attendance.unpaid_leave_days + appliedLatePenaltyDays);
-  }
-  ctx.attendance.late_penalty_days = round2(appliedLatePenaltyDays);
+  // Keep payroll as a pure aggregation layer: no attendance-day transformations here.
+  ctx.attendance.late_penalty_days = 0;
   // Ensure late arrival details are visible in payroll snapshot
   ctx.lateEvaluation = period.attendanceSummary.late_evaluation || {};
 
   recordAudit("late_penalty_conversion", {
-    rule: `${lateStep} late = 1 unpaid day`,
-    computed_unpaid_days_from_late: computedLatePenaltyDays,
-    applied_unpaid_days_from_late: appliedLatePenaltyDays,
+    rule: "disabled_in_payroll_layer",
+    computed_unpaid_days_from_late: 0,
+    applied_unpaid_days_from_late: 0,
   });
 
   ctx.attendance.present_days = round2(Math.max(0, ctx.attendance.present_days));
@@ -96,10 +86,8 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
   ctx.attendance.half_day_units = round2(Math.max(0, ctx.attendance.half_day_units || 0));
   ctx.attendance.paid_leave_days = round2(Math.max(0, ctx.attendance.paid_leave_days));
   ctx.attendance.unpaid_leave_days = round2(Math.max(0, ctx.attendance.unpaid_leave_days));
-  // Proration must always use correct payable days
-  ctx.payableDays = round2(
-    ctx.attendance.present_days + ctx.attendance.paid_leave_days + ctx.attendance.half_day_units
-  );
+  // Proration must always use attendance-evaluated payable days as source of truth.
+  ctx.payableDays = round2(period.attendanceSummary.payable_days || 0);
   const payableRatio = ctx.workingDays > 0 ? ctx.payableDays / ctx.workingDays : 0;
 
   recordAudit("leave_adjustment", {
@@ -391,9 +379,9 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
       late_arrivals: Number(ctx.attendance.late_arrivals || 0),
       late_penalty_days: Number(ctx.attendance.late_penalty_days || 0),
       late_penalty_rule: {
-        late_count_for_unpaid_day: lateStep,
-        computed_unpaid_days_from_late: computedLatePenaltyDays,
-        applied_unpaid_days_from_late: round2(ctx.attendance.late_penalty_days),
+        late_count_for_unpaid_day: Number(period.attendanceSummary?.late_penalty_rule?.late_count_for_unpaid_day || 0),
+        computed_unpaid_days_from_late: Number(period.attendanceSummary?.late_penalty_rule?.computed_unpaid_days_from_late || 0),
+        applied_unpaid_days_from_late: Number(period.attendanceSummary?.late_penalty_rule?.applied_unpaid_days_from_late || 0),
       },
       absent_days: round2(ctx.attendance.unpaid_leave_days),
     },
@@ -422,9 +410,9 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
         late_arrivals: Number(ctx.attendance.late_arrivals || 0),
         late_penalty_days: Number(ctx.attendance.late_penalty_days || 0),
         late_penalty_rule: {
-          late_count_for_unpaid_day: lateStep,
-          computed_unpaid_days_from_late: computedLatePenaltyDays,
-          applied_unpaid_days_from_late: round2(ctx.attendance.late_penalty_days),
+          late_count_for_unpaid_day: Number(period.attendanceSummary?.late_penalty_rule?.late_count_for_unpaid_day || 0),
+          computed_unpaid_days_from_late: Number(period.attendanceSummary?.late_penalty_rule?.computed_unpaid_days_from_late || 0),
+          applied_unpaid_days_from_late: Number(period.attendanceSummary?.late_penalty_rule?.applied_unpaid_days_from_late || 0),
         },
       },
       // Always use DB status for each record

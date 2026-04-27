@@ -32,6 +32,21 @@ const attendanceStatusRule = Joi.string()
     "ON_LEAVE_WORKING"
   );
 const requestStatusRule = Joi.string().valid("pending", "approved", "rejected", "cancelled");
+const lateRegularizationTypeRule = Joi.string().valid(
+  "late_arrival",
+  "missed_checkin",
+  "early_checkout",
+  "short_hours",
+  "shift_mismatch",
+  "system_error",
+  "transport_issue",
+  "weather_issue",
+  "medical_reason",
+  "official_work",
+  "emergency",
+  "other"
+);
+const lateRegularizationStatusRule = Joi.string().valid("pending", "approved", "rejected");
 export const createShiftSchema = strictObject({
   name: Joi.string().trim().required(),
   start_time: timeHHmmRule.required(),
@@ -171,6 +186,52 @@ export const overtimeRequestQuerySchema = strictObject({
   limit: limitRule,
   employee_id: uuidRule.allow(null),
   status: requestStatusRule.allow(null),
+});
+
+export const regularizationIdParamSchema = strictObject({ id: uuidRule.required() });
+
+export const lateRegularizationSubmitSchema = strictObject({
+  attendance_id: uuidRule.required(),
+  type: lateRegularizationTypeRule.required(),
+  custom_type: Joi.string().trim().min(2).max(100).allow("", null),
+  reason: Joi.string().trim().min(5).max(1000).required(),
+  supporting_documents: Joi.alternatives().try(
+    Joi.array().items(Joi.string().uri()),
+    Joi.string().uri()
+  ),
+}).custom((value, helpers) => {
+  if (value.type === "other" && !value.custom_type) {
+    return helpers.message("custom_type is required when type is other");
+  }
+  if (value.type !== "other" && value.custom_type) {
+    return helpers.message("custom_type is only allowed when type is other");
+  }
+  return value;
+});
+
+export const lateRegularizationReviewSchema = strictObject({
+  status: Joi.string().valid("approved", "rejected").required(),
+  remarks: Joi.string().trim().max(1000).allow("", null),
+  applied_effect: Joi.boolean(),
+  hr_override: Joi.boolean(),
+  override_reason: Joi.string().trim().max(500).allow("", null),
+}).custom((value, helpers) => {
+  if (value.hr_override === true && !value.override_reason) {
+    return helpers.message("override_reason is required when hr_override is true");
+  }
+  return value;
+});
+
+export const lateRegularizationListQuerySchema = strictObject({
+  page: pageRule,
+  limit: limitRule,
+  employee_id: uuidRule.allow(null),
+  attendance_id: uuidRule.allow(null),
+  type: lateRegularizationTypeRule.allow(null),
+  custom_type: Joi.string().trim().max(100).allow(null, ""),
+  status: lateRegularizationStatusRule.allow(null),
+  start_date: isoDateRule.allow(null),
+  end_date: isoDateRule.allow(null),
 });
 
 const reportTypeRule = Joi.string().valid(

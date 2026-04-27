@@ -18,6 +18,7 @@ export const evaluateOvertimeFromAttendance = (attendanceRows = [], shiftByDate 
   for (const attendance of attendanceRows) {
     const day = toDateOnly(attendance.date);
     const actualHours = Number(attendance.duration_hours || 0);
+    const explicitEligibleOvertime = Number(attendance.overtime_hours);
 
     if (actualHours <= 0) continue; // No work, no overtime
 
@@ -26,8 +27,11 @@ export const evaluateOvertimeFromAttendance = (attendanceRows = [], shiftByDate 
       ? Number(shiftAssignment.shift.duration_hours) 
       : standardHours;
 
-    // Calculate raw overtime: hours beyond shift duration
-    let rawOvertime = Math.max(0, round2(actualHours - shiftHours));
+    // Prefer attendance-record overtime_hours when available to keep payroll aligned with attendance calculations.
+    // Fallback to derived overtime from worked_hours - shift_hours.
+    let rawOvertime = Number.isFinite(explicitEligibleOvertime)
+      ? Math.max(0, round2(explicitEligibleOvertime))
+      : Math.max(0, round2(actualHours - shiftHours));
 
     // If require_full_shift_for_overtime is true, only count hours beyond full shift
     // This prevents late compensation (or partial day work) from being counted as overtime
