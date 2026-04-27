@@ -98,6 +98,13 @@ export const generatePayslipPdf = (payload, res) => {
   if (summary.late_penalty_days !== undefined) {
     line(doc, "Late Penalty Days", summary.late_penalty_days);
   }
+  if (attendance.regularization_summary?.approved_regularizations_applied !== undefined || summary.approved_regularizations_applied !== undefined) {
+    line(
+      doc,
+      "Approved Regularizations Applied",
+      attendance.regularization_summary?.approved_regularizations_applied ?? summary.approved_regularizations_applied
+    );
+  }
   line(
     doc,
     "Overtime Hours",

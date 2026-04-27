@@ -33,6 +33,9 @@ const attendancePolicySchema = Joi.object({
   no_checkout_behavior: Joi.string().valid('present', 'half_day', 'absent').default('present').description('Behavior when employee checks in but has no checkout'),
   short_hours_behavior: Joi.string().valid('present', 'half_day', 'absent').default('absent').description('Behavior when worked hours are below half-day threshold but above min_hours_for_present'),
   short_hours_payable: Joi.number().valid(0, 0.5, 1).default(0).description('Payable fraction for short-hours behavior when marked as present'),
+  late_regularization_window_hours: Joi.number().integer().min(1).max(168).default(48).description('Time window in hours for submitting late regularization requests'),
+  late_regularization_monthly_limit: Joi.number().integer().min(0).default(4).description('Monthly cap of regularization requests per employee. 0 means unlimited'),
+  late_regularization_require_documents: Joi.boolean().default(false).description('Whether supporting documents are mandatory for regularization requests'),
   shift_grace_by_shift_name: Joi.object().pattern(
     Joi.string(),
     Joi.number().integer().min(0)
@@ -63,6 +66,9 @@ const attendancePolicyUpdateSchema = attendancePolicySchema.fork(
     'no_checkout_behavior',
     'short_hours_behavior',
     'short_hours_payable',
+    'late_regularization_window_hours',
+    'late_regularization_monthly_limit',
+    'late_regularization_require_documents',
     'shift_grace_by_shift_name',
     'shift_grace_by_shift_id',
     'weekly_off_days',

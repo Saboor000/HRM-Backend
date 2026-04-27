@@ -2,6 +2,7 @@ import { getAttendancePolicyById } from "../policy.service.js";
 import { getSalaryStructure } from "../payroll/payroll.repository.js";
 import { classifyBusinessDate, round2, toDateOnly } from "../payroll/payroll.utils.js";
 import { resolveTimezone, toClockMinutesInTimezone } from "../../utils/timezone.js";
+import { applyRegularizationToEvaluation } from "./late-regularization.service.js";
 
 const DEFAULT_HALF_DAY_RATIO = 0.5;
 
@@ -77,18 +78,14 @@ export const evaluateAttendanceRecord = ({
   attendancePolicy = {},
   leaveRules = {},
   shift = null,
+  regularizations = [],
 }) => {
   const normalizedDate = normalizeDate(date || attendanceRecord?.date || leaveRecord?.start_date);
   const calendar = classifyBusinessDate(normalizedDate, attendancePolicy || {});
   const timezone = resolvePolicyTimezone(attendancePolicy || {});
 
   const recordShift = shift || attendanceRecord?.shift || null;
-  const shiftHours = Number(
-    recordShift?.duration_hours ?? attendancePolicy?.standard_work_hours_per_day ?? 8
-  );
-  const halfDayThreshold = Number(
-    attendancePolicy?.half_day_threshold_hours ?? Math.max(0.5, shiftHours * DEFAULT_HALF_DAY_RATIO)
-  );
+  const shiftHours = Number(recordShift?.duration_hours ?? attendancePolicy?.standard_work_hours_per_day ?? 8);
 
   const hasCheckIn = Boolean(attendanceRecord?.check_in_time);
   const hasCheckOut = Boolean(attendanceRecord?.check_out_time);
@@ -106,10 +103,23 @@ export const evaluateAttendanceRecord = ({
   const isHoliday = !calendar.isWorkingDay && calendar.reason === "holiday";
   const isOffDay = !calendar.isWorkingDay && !isHoliday;
 
-  // Policy-driven thresholds
+  // Policy-driven thresholds (shift-first full-day evaluation)
+  const shiftBasedFullDayHours = Number(recordShift?.duration_hours);
+  const policyFullDayHours = Number(attendancePolicy?.full_day_hours ?? shiftHours);
+  const fullDayHours = Number.isFinite(shiftBasedFullDayHours) && shiftBasedFullDayHours > 0
+    ? shiftBasedFullDayHours
+    : policyFullDayHours;
+
+  const configuredHalfDayThreshold = Number(
+    attendancePolicy?.min_hours_for_half_day
+      ?? attendancePolicy?.half_day_threshold_hours
+      ?? Math.max(0.5, fullDayHours * DEFAULT_HALF_DAY_RATIO)
+  );
+  const minHoursForHalfDay = fullDayHours > 0
+    ? Math.min(fullDayHours, configuredHalfDayThreshold)
+    : configuredHalfDayThreshold;
+
   const minHoursForPresent = Number(attendancePolicy?.min_hours_for_present ?? 0);
-  const minHoursForHalfDay = Number(attendancePolicy?.min_hours_for_half_day ?? halfDayThreshold);
-  const fullDayHours = Number(attendancePolicy?.full_day_hours ?? shiftHours);
   const noCheckoutBehavior = String(attendancePolicy?.no_checkout_behavior ?? "present").toLowerCase();
   const shortHoursBehavior = String(attendancePolicy?.short_hours_behavior ?? "absent").toLowerCase();
   const shortHoursPayable = Number(attendancePolicy?.short_hours_payable ?? 0);
@@ -167,7 +177,7 @@ export const evaluateAttendanceRecord = ({
     evaluatedStatus = "absent";
   }
 
-  return {
+  const evaluation = {
     date: normalizedDate,
     evaluated_status: evaluatedStatus,
     day_type: calendar.reason,
@@ -190,6 +200,8 @@ export const evaluateAttendanceRecord = ({
       isLeaveDay ? "leave" : null,
     ].filter(Boolean),
   };
+
+  return applyRegularizationToEvaluation(evaluation, regularizations);
 };
 
 const groupAttendanceByDate = (attendanceRows = [], attendancePolicy = {}) => {
@@ -261,6 +273,7 @@ export const evaluateAttendancePeriod = ({
   attendanceRows = [],
   leaveRows = [],
   assignmentsRows = [],
+  regularizationByAttendanceId = new Map(),
   periodBounds,
   attendancePolicy = {},
   leaveRules = {},
@@ -279,11 +292,13 @@ export const evaluateAttendancePeriod = ({
   let holidayDays = 0;
   let offDays = 0;
   let lateArrivals = 0;
+  let approvedRegularizationsApplied = 0;
 
   for (const day of workingDates) {
     const attendance = attendanceByDate.get(day) || null;
     const leave = leaveByDate.get(day) || null;
     const shift = shiftByDate.get(day)?.shift || attendance?.shift || null;
+    const regularizations = attendance?.id ? (regularizationByAttendanceId.get(attendance.id) || []) : [];
 
     const evaluation = evaluateAttendanceRecord({
       date: day,
@@ -292,6 +307,7 @@ export const evaluateAttendancePeriod = ({
       attendancePolicy,
       leaveRules,
       shift,
+      regularizations,
     });
 
     evaluations.push({
@@ -341,6 +357,10 @@ export const evaluateAttendancePeriod = ({
     if (evaluation.is_late) {
       lateArrivals += 1;
     }
+
+    if (evaluation?.regularization?.applied) {
+      approvedRegularizationsApplied += Number(evaluation.regularization.approved_count || 0);
+    }
   }
 
   const halfDayUnits = round2(halfDays * DEFAULT_HALF_DAY_RATIO);
@@ -363,6 +383,7 @@ export const evaluateAttendancePeriod = ({
       off_days: round2(offDays),
       payable_days: payableDays,
       late_arrivals: round2(lateArrivals),
+      approved_regularizations_applied: round2(approvedRegularizationsApplied),
     },
   };
 };

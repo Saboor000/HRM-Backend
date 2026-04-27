@@ -2,6 +2,7 @@ import { supabase } from "../../config/supabase.js";
 import { employeeByAuth } from "./assignment.service.js";
 import { getEmployeeLeavesInRange } from "./checkin-checkout.service.js";
 import { evaluateAttendanceRecord, resolveEmployeeAttendancePolicy } from "./evaluated-attendance.service.js";
+import { getApprovedRegularizationsForAttendanceIds, resolveEffectiveAttendanceStatus } from "./late-regularization.service.js";
 import { formatTimestampInTimezone, resolveTimezone } from "../../utils/timezone.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
@@ -31,7 +32,19 @@ const STATUS_FILTER_MAP = {
   PRESENT: { type: "in", values: ["online", "offline"] },
   ABSENT: { type: "eq", value: "absent" },
   ON_LEAVE: { type: "eq", value: "leave" },
+  ON_HOLIDAY: { type: "eq", value: "holiday" },
   ON_LEAVE_WORKING: { type: "leave_working" },
+};
+const EVALUATED_STATUS_FILTER_MAP = {
+  HALF_DAY: "half_day",
+  OFF_DAY: "off_day",
+  OFF_DAY_WORKED: "off_day_worked",
+};
+
+const getEvaluatedStatusFilter = (rawStatus) => {
+  if (!rawStatus) return null;
+  const key = String(rawStatus).trim().toUpperCase();
+  return EVALUATED_STATUS_FILTER_MAP[key] || null;
 };
 
 const applyStatusFilter = (query, rawStatus) => {
@@ -61,6 +74,32 @@ const applyStatusFilter = (query, rawStatus) => {
   }
 
   return query.eq("status", mapped.value);
+};
+
+const getRegularizationMapForAttendance = async (attendanceRows = []) =>
+  getApprovedRegularizationsForAttendanceIds(
+    (attendanceRows || []).map((row) => row?.id).filter(Boolean)
+  );
+
+const getEffectiveStatusForRecord = (record, regularizationMap = new Map()) =>
+  resolveEffectiveAttendanceStatus(record, regularizationMap.get(record?.id) || []);
+
+const regularizedCount = (attendanceRows = [], regularizationMap = new Map(), matcher) =>
+  attendanceRows.reduce((count, row) => {
+    const effective = getEffectiveStatusForRecord(row, regularizationMap);
+    const matched = typeof matcher === "function" ? matcher(effective.status) : matcher.has(effective.status);
+    return matched ? count + 1 : count;
+  }, 0);
+
+const withRegularizationInfo = (record, regularizationMap = new Map()) => {
+  const effective = getEffectiveStatusForRecord(record, regularizationMap);
+  return {
+    ...record,
+    effective_status: effective.status,
+    regularization_applied: effective.applied,
+    regularization_ids: effective.ids,
+    regularization_types: effective.types,
+  };
 };
 
 const dateRange = (startDate, endDate) => {
@@ -154,8 +193,11 @@ export const getDailyAttendanceReportService = async (date, department) => {
     if (leaveErr) throw error(400, leaveErr.message);
 
     const visibleLeaveData = filterLeaveRecordsAlreadyInAttendance(attendanceData, leaveData);
+    const regularizationMap = await getRegularizationMapForAttendance(attendanceData || []);
 
-    const attendanceRecords = toTypedRecords(attendanceData, "attendance").map(withAttendanceWorkMetrics);
+    const attendanceRecords = toTypedRecords(attendanceData, "attendance")
+      .map((record) => withRegularizationInfo(record, regularizationMap))
+      .map(withAttendanceWorkMetrics);
     const leaveRecords = toTypedRecords(visibleLeaveData, "leave").map(withAttendanceWorkMetrics);
     const allRecords = [...attendanceRecords, ...leaveRecords];
 
@@ -164,10 +206,14 @@ export const getDailyAttendanceReportService = async (date, department) => {
         ...attendanceData.map((r) => r.employee_id),
         ...visibleLeaveData.map((l) => l.employee_id),
       ]).size,
-      present: attendanceData.filter((r) => PRESENT_STATUSES.has(r.status)).length,
-      absent: attendanceData.filter((r) => ABSENT_STATUSES.has(r.status)).length,
-      on_leave: attendanceData.filter((r) => LEAVE_STATUSES.has(r.status)).length + visibleLeaveData.length,
-      on_holiday: attendanceData.filter((r) => r.status === "holiday").length,
+      present: regularizedCount(attendanceData, regularizationMap, PRESENT_STATUSES),
+      absent: regularizedCount(attendanceData, regularizationMap, ABSENT_STATUSES),
+      on_leave: regularizedCount(attendanceData, regularizationMap, LEAVE_STATUSES) + visibleLeaveData.length,
+      on_holiday: regularizedCount(attendanceData, regularizationMap, (status) => status === "holiday"),
+      approved_regularizations_applied: Array.from(regularizationMap.values()).reduce(
+        (sum, items) => sum + Number(items.length || 0),
+        0
+      ),
     };
 
     return { date, summary, records: allRecords };
@@ -209,6 +255,7 @@ export const getWeeklyAttendanceReportService = async (weekOf, year) => {
     if (leaveErr) throw error(400, leaveErr.message);
 
     const visibleLeaveData = filterLeaveRecordsAlreadyInAttendance(attendanceData, leaveData);
+    const regularizationMap = await getRegularizationMapForAttendance(attendanceData || []);
 
     const groupedByEmployee = {};
     attendanceData.forEach((record) => {
@@ -220,7 +267,7 @@ export const getWeeklyAttendanceReportService = async (weekOf, year) => {
       }
       groupedByEmployee[record.employee_id].days.push(
         withAttendanceWorkMetrics({
-          ...record,
+          ...withRegularizationInfo(record, regularizationMap),
           type: "attendance",
         })
       );
@@ -290,18 +337,25 @@ export const getMonthlyAttendanceReportService = async (month, year, department)
     if (leaveErr) throw error(400, leaveErr.message);
 
     const visibleLeaveData = filterLeaveRecordsAlreadyInAttendance(attendanceData, leaveData);
+    const regularizationMap = await getRegularizationMapForAttendance(attendanceData || []);
 
-    const attendanceRecords = toTypedRecords(attendanceData, "attendance").map(withAttendanceWorkMetrics);
+    const attendanceRecords = toTypedRecords(attendanceData, "attendance")
+      .map((record) => withRegularizationInfo(record, regularizationMap))
+      .map(withAttendanceWorkMetrics);
     const leaveRecords = toTypedRecords(visibleLeaveData, "leave").map(withAttendanceWorkMetrics);
     const allRecords = [...attendanceRecords, ...leaveRecords];
 
     const summary = {
       total_records: allRecords.length,
-      present: attendanceData.filter((r) => PRESENT_STATUSES.has(r.status)).length,
-      absent: attendanceData.filter((r) => ABSENT_STATUSES.has(r.status)).length,
-      on_leave: attendanceData.filter((r) => LEAVE_STATUSES.has(r.status)).length + visibleLeaveData.length,
-      on_holiday: attendanceData.filter((r) => r.status === "holiday").length,
+      present: regularizedCount(attendanceData, regularizationMap, PRESENT_STATUSES),
+      absent: regularizedCount(attendanceData, regularizationMap, ABSENT_STATUSES),
+      on_leave: regularizedCount(attendanceData, regularizationMap, LEAVE_STATUSES) + visibleLeaveData.length,
+      on_holiday: regularizedCount(attendanceData, regularizationMap, (status) => status === "holiday"),
       total_working_days: new Set(attendanceData.map((r) => r.date)).size,
+      approved_regularizations_applied: Array.from(regularizationMap.values()).reduce(
+        (sum, items) => sum + Number(items.length || 0),
+        0
+      ),
     };
 
     return { month, year, summary, records: allRecords };
@@ -340,9 +394,11 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
 
     if (leaveErr) throw error(400, leaveErr.message);
 
+    const regularizationMap = await getRegularizationMapForAttendance(attendanceData || []);
     const employeeMetrics = {};
     attendanceData.forEach((record) => {
-      if (record.status === "leave") return;
+      const effective = getEffectiveStatusForRecord(record, regularizationMap);
+      if (LEAVE_STATUSES.has(effective.status)) return;
 
       const empId = record.employee_id;
       if (!employeeMetrics[empId]) {
@@ -362,8 +418,8 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
       const metrics = employeeMetrics[empId];
       metrics.total_days += 1;
 
-      if (PRESENT_STATUSES.has(record.status)) metrics.present_days += 1;
-      if (ABSENT_STATUSES.has(record.status)) metrics.absent_days += 1;
+      if (PRESENT_STATUSES.has(effective.status)) metrics.present_days += 1;
+      if (ABSENT_STATUSES.has(effective.status)) metrics.absent_days += 1;
 
       if (record.duration_hours) {
         metrics.total_hours += record.duration_hours;
@@ -408,7 +464,14 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
       team_id: teamId,
       summary: {
         total_employees: Object.keys(employeeMetrics).length,
-        total_records: attendanceData.filter((record) => !LEAVE_STATUSES.has(record.status)).length + leaveData.length,
+        total_records: attendanceData.filter((record) => {
+          const effective = getEffectiveStatusForRecord(record, regularizationMap);
+          return !LEAVE_STATUSES.has(effective.status);
+        }).length + leaveData.length,
+        approved_regularizations_applied: Array.from(regularizationMap.values()).reduce(
+          (sum, items) => sum + Number(items.length || 0),
+          0
+        ),
       },
       employee_metrics: Object.values(employeeMetrics),
     };
@@ -431,6 +494,7 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
       .select(ATTENDANCE_SELECT, { count: "exact" })
       .eq("employee_id", employee.id)
       .order("date", { ascending: false });
+    const evaluatedStatusFilter = getEvaluatedStatusFilter(filters.status);
 
     if (filters.date) {
       query = query.eq("date", toDateOnly(filters.date));
@@ -441,36 +505,61 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
     if (filters.end_date) {
       query = query.lte("date", toDateOnly(filters.end_date));
     }
-    if (filters.status) {
+    if (filters.status && !evaluatedStatusFilter) {
       query = applyStatusFilter(query, filters.status);
     }
     if (filters.shift_id) {
       query = query.eq("shift_id", filters.shift_id);
     }
 
-    const { data, error: err, count } = await query.range(from, from + limit - 1);
-    if (err) throw error(400, err.message);
+    let attendanceRows = [];
+    let totalCount = 0;
 
-    const attendanceRows = data || [];
+    if (evaluatedStatusFilter) {
+      const { data, error: err } = await query;
+      if (err) throw error(400, err.message);
+      attendanceRows = data || [];
+      totalCount = attendanceRows.length;
+    } else {
+      const { data, error: err, count } = await query.range(from, from + limit - 1);
+      if (err) throw error(400, err.message);
+      attendanceRows = data || [];
+      totalCount = count || 0;
+    }
+
     const dates = attendanceRows.map((record) => record.date).filter(Boolean).sort();
     const startDate = filters.start_date ? toDateOnly(filters.start_date) : dates[0] || null;
     const endDate = filters.end_date ? toDateOnly(filters.end_date) : dates[dates.length - 1] || startDate;
     const leaveRows = startDate && endDate ? await getEmployeeLeavesInRange(employee.id, startDate, endDate) : [];
 
-    const records = attendanceRows.map((record) => {
+    const regularizationMap = await getRegularizationMapForAttendance(attendanceRows || []);
+    let records = attendanceRows.map((record) => {
+      const regularizations = regularizationMap.get(record.id) || [];
       const leaveRecord = getLeaveForDate(leaveRows, record.date);
       const evaluation = evaluateAttendanceRecord({
         date: record.date,
         attendanceRecord: record,
         leaveRecord,
         attendancePolicy: attendancePolicy || {},
+        regularizations,
       });
 
       return {
         ...withAttendanceWorkMetrics(record),
+        regularization_applied: regularizations.length > 0,
+        regularization_ids: regularizations.map((item) => item.id),
+        regularization_types: regularizations.map((item) => item.type),
         evaluation,
       };
     });
+
+    if (evaluatedStatusFilter) {
+      const filtered = records.filter(
+        (record) => String(record?.evaluation?.evaluated_status || "") === evaluatedStatusFilter
+      );
+      totalCount = filtered.length;
+      records = filtered.slice(from, from + limit);
+    }
 
     const evaluatedSummary = records.reduce(
       (acc, record) => {
@@ -497,7 +586,7 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
     );
 
     const summary = {
-      total_records: count || 0,
+      total_records: totalCount || 0,
       present: round2(evaluatedSummary.present_days),
       absent: round2(evaluatedSummary.absent_days),
       on_leave: round2(evaluatedSummary.paid_leave_days),
@@ -515,6 +604,10 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
           evaluatedSummary.present_days + (evaluatedSummary.half_days * 0.5) + evaluatedSummary.paid_leave_days
         ),
         late_arrivals: round2(evaluatedSummary.late_arrivals),
+        approved_regularizations_applied: Array.from(regularizationMap.values()).reduce(
+          (sum, items) => sum + Number(items.length || 0),
+          0
+        ),
       },
     };
 
@@ -532,8 +625,8 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
       pagination: {
         page,
         limit,
-        total: count || 0,
-        pages: Math.ceil((count || 0) / limit),
+        total: totalCount || 0,
+        pages: Math.ceil((totalCount || 0) / limit),
       },
     };
   } catch (e) {
@@ -594,15 +687,17 @@ const getAttendanceSummaryForRange = async (startDate, endDate, department) => {
   if (err) throw error(400, err.message);
 
   const records = data || [];
+  const regularizationMap = await getRegularizationMapForAttendance(records || []);
   const dailyMap = {};
   for (const record of records) {
+    const effective = getEffectiveStatusForRecord(record, regularizationMap);
     const key = record.date;
     if (!dailyMap[key]) {
       dailyMap[key] = { date: key, present: 0, absent: 0, on_leave: 0, overtime_hours: 0 };
     }
-    if (PRESENT_STATUSES.has(record.status)) dailyMap[key].present += 1;
-    if (ABSENT_STATUSES.has(record.status)) dailyMap[key].absent += 1;
-    if (LEAVE_STATUSES.has(record.status)) dailyMap[key].on_leave += 1;
+    if (PRESENT_STATUSES.has(effective.status)) dailyMap[key].present += 1;
+    if (ABSENT_STATUSES.has(effective.status)) dailyMap[key].absent += 1;
+    if (LEAVE_STATUSES.has(effective.status)) dailyMap[key].on_leave += 1;
     dailyMap[key].overtime_hours += Number(record.overtime_hours || 0);
   }
 
@@ -610,11 +705,15 @@ const getAttendanceSummaryForRange = async (startDate, endDate, department) => {
     records,
     summary: {
       total_records: records.length,
-      present: records.filter((r) => PRESENT_STATUSES.has(r.status)).length,
-      absent: records.filter((r) => ABSENT_STATUSES.has(r.status)).length,
-      on_leave: records.filter((r) => LEAVE_STATUSES.has(r.status)).length,
-      on_holiday: records.filter((r) => r.status === "holiday").length,
+      present: regularizedCount(records, regularizationMap, PRESENT_STATUSES),
+      absent: regularizedCount(records, regularizationMap, ABSENT_STATUSES),
+      on_leave: regularizedCount(records, regularizationMap, LEAVE_STATUSES),
+      on_holiday: regularizedCount(records, regularizationMap, (status) => status === "holiday"),
       overtime_hours: Math.round(records.reduce((sum, r) => sum + Number(r.overtime_hours || 0), 0) * 100) / 100,
+      approved_regularizations_applied: Array.from(regularizationMap.values()).reduce(
+        (sum, items) => sum + Number(items.length || 0),
+        0
+      ),
     },
     daily_trend: Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date)),
   };

@@ -1,4 +1,8 @@
 import { supabase } from "../config/supabase.js";
+import {
+  getApprovedRegularizationsForAttendanceIds,
+  resolveEffectiveAttendanceStatus,
+} from "./attendance/late-regularization.service.js";
 
 const PRESENT_STATUSES = new Set(["online", "offline", "PRESENT", "ON_LEAVE_WORKING"]);
 const ABSENT_STATUSES = new Set(["absent", "ABSENT"]);
@@ -101,7 +105,26 @@ const applyLeavesFilters = (query, filters) => {
   return q;
 };
 
-const summarizeAttendanceRows = (rows) => {
+const getRegularizationMapForAttendanceRows = async (rows = []) =>
+  getApprovedRegularizationsForAttendanceIds((rows || []).map((row) => row?.id).filter(Boolean));
+
+const getEffectiveStatus = (row, regularizationMap = new Map()) =>
+  resolveEffectiveAttendanceStatus(row, regularizationMap.get(row?.id) || []).status;
+
+const countAppliedRegularizations = (regularizationMap = new Map(), rows = []) => {
+  const uniqueAttendanceIds = new Set((rows || []).map((row) => row?.id).filter(Boolean));
+  let count = 0;
+
+  for (const [attendanceId, items] of regularizationMap.entries()) {
+    if (uniqueAttendanceIds.has(attendanceId)) {
+      count += Number(items?.length || 0);
+    }
+  }
+
+  return count;
+};
+
+const summarizeAttendanceRows = (rows, regularizationMap = new Map()) => {
   const summary = {
     total: rows.length,
     present: 0,
@@ -110,10 +133,11 @@ const summarizeAttendanceRows = (rows) => {
     holiday: 0,
     overtime_hours: 0,
     overtime_records: 0,
+    approved_regularizations_applied: countAppliedRegularizations(regularizationMap, rows),
   };
 
   for (const row of rows) {
-    const status = row.status;
+    const status = getEffectiveStatus(row, regularizationMap);
     if (PRESENT_STATUSES.has(status)) summary.present += 1;
     if (ABSENT_STATUSES.has(status)) summary.absent += 1;
     if (LEAVE_STATUSES.has(status)) summary.on_leave += 1;
@@ -143,7 +167,7 @@ const getTrendBucketKey = (dateString, groupBy) => {
   return dateString;
 };
 
-const makeTrend = (rows, groupBy = "day") => {
+const makeTrend = (rows, groupBy = "day", regularizationMap = new Map()) => {
   const bucket = new Map();
 
   for (const row of rows) {
@@ -162,17 +186,18 @@ const makeTrend = (rows, groupBy = "day") => {
 
     const item = bucket.get(key);
     item.total += 1;
-    if (PRESENT_STATUSES.has(row.status)) item.present += 1;
-    if (ABSENT_STATUSES.has(row.status)) item.absent += 1;
-    if (LEAVE_STATUSES.has(row.status)) item.on_leave += 1;
-    if (row.status === "holiday") item.holiday += 1;
+    const status = getEffectiveStatus(row, regularizationMap);
+    if (PRESENT_STATUSES.has(status)) item.present += 1;
+    if (ABSENT_STATUSES.has(status)) item.absent += 1;
+    if (LEAVE_STATUSES.has(status)) item.on_leave += 1;
+    if (status === "holiday") item.holiday += 1;
     item.overtime_hours = Number((item.overtime_hours + Number(row.overtime_hours || 0)).toFixed(2));
   }
 
   return [...bucket.values()].sort((a, b) => a.period.localeCompare(b.period));
 };
 
-const makeDepartmentSummary = (rows) => {
+const makeDepartmentSummary = (rows, regularizationMap = new Map()) => {
   const bucket = new Map();
 
   for (const row of rows) {
@@ -190,9 +215,10 @@ const makeDepartmentSummary = (rows) => {
 
     const item = bucket.get(dept);
     item.total += 1;
-    if (PRESENT_STATUSES.has(row.status)) item.present += 1;
-    if (ABSENT_STATUSES.has(row.status)) item.absent += 1;
-    if (LEAVE_STATUSES.has(row.status)) item.on_leave += 1;
+    const status = getEffectiveStatus(row, regularizationMap);
+    if (PRESENT_STATUSES.has(status)) item.present += 1;
+    if (ABSENT_STATUSES.has(status)) item.absent += 1;
+    if (LEAVE_STATUSES.has(status)) item.on_leave += 1;
     item.overtime_hours = Number((item.overtime_hours + Number(row.overtime_hours || 0)).toFixed(2));
   }
 
@@ -269,29 +295,39 @@ const getPendingApprovals = async (filters) => {
   let leaveQ = supabase.from("leaves").select("id, employee_id, employee:employee_id(id, department)", { count: "exact" }).eq("status", "pending");
   let overtimeQ = supabase.from("overtime_requests").select("id, employee_id, employee:employee_id(id, department)", { count: "exact" }).eq("status", "pending");
   let shiftQ = supabase.from("shift_change_requests").select("id, employee_id, employee:employee_id(id, department)", { count: "exact" }).eq("status", "pending");
+  let regularizationQ = supabase.from("late_regularizations").select("id, employee_id, employee:employee_id(id, department)", { count: "exact" }).eq("status", "pending");
 
   if (filters.employee_id) {
     leaveQ = leaveQ.eq("employee_id", filters.employee_id);
     overtimeQ = overtimeQ.eq("employee_id", filters.employee_id);
     shiftQ = shiftQ.eq("employee_id", filters.employee_id);
+    regularizationQ = regularizationQ.eq("employee_id", filters.employee_id);
   }
 
   if (filters.department) {
     leaveQ = leaveQ.filter("employee.department", "eq", filters.department);
     overtimeQ = overtimeQ.filter("employee.department", "eq", filters.department);
     shiftQ = shiftQ.filter("employee.department", "eq", filters.department);
+    regularizationQ = regularizationQ.filter("employee.department", "eq", filters.department);
   }
 
-  const [leaveRes, overtimeRes, shiftRes] = await Promise.all([leaveQ, overtimeQ, shiftQ]);
+  const [leaveRes, overtimeRes, shiftRes, regularizationRes] = await Promise.all([
+    leaveQ,
+    overtimeQ,
+    shiftQ,
+    regularizationQ,
+  ]);
 
   if (leaveRes.error) throw error(400, leaveRes.error.message);
   if (overtimeRes.error) throw error(400, overtimeRes.error.message);
   if (shiftRes.error) throw error(400, shiftRes.error.message);
+  if (regularizationRes.error) throw error(400, regularizationRes.error.message);
 
   return {
     pending_leaves: leaveRes.count || 0,
     pending_overtime_requests: overtimeRes.count || 0,
     pending_shift_change_requests: shiftRes.count || 0,
+    pending_late_regularizations: regularizationRes.count || 0,
   };
 };
 
@@ -399,8 +435,13 @@ export const getDashboardOverviewService = async (authUser, rawFilters = {}) => 
     getRecentRequests(filters),
   ]);
 
-  const todaySummary = summarizeAttendanceRows(todayAttendance.rows);
-  const rangeSummary = summarizeAttendanceRows(attendanceRows);
+  const regularizationMap = await getRegularizationMapForAttendanceRows([
+    ...(todayAttendance.rows || []),
+    ...(attendanceRows || []),
+  ]);
+
+  const todaySummary = summarizeAttendanceRows(todayAttendance.rows, regularizationMap);
+  const rangeSummary = summarizeAttendanceRows(attendanceRows, regularizationMap);
 
   const leavesSummary = {
     total: leaveRows.length,
@@ -459,9 +500,11 @@ export const getCombinedAttendanceAnalyticsService = async (authUser, rawFilters
     getPendingApprovals(filters),
   ]);
 
-  const statusBreakdown = summarizeAttendanceRows(attendanceRows);
-  const trend = makeTrend(attendanceRows, rawFilters.group_by || "day");
-  const departmentSummary = makeDepartmentSummary(attendanceRows);
+  const regularizationMap = await getRegularizationMapForAttendanceRows(attendanceRows || []);
+
+  const statusBreakdown = summarizeAttendanceRows(attendanceRows, regularizationMap);
+  const trend = makeTrend(attendanceRows, rawFilters.group_by || "day", regularizationMap);
+  const departmentSummary = makeDepartmentSummary(attendanceRows, regularizationMap);
   const topOvertimeEmployees = makeTopOvertimeEmployees(attendanceRows, topN);
 
   const leaveBreakdown = {
