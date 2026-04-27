@@ -179,12 +179,7 @@ const reportTypeRule = Joi.string().valid(
   "monthly",
   "summary",
   "leaves",
-  "overtime",
-  "shift-management",
-  "shifts",
-  "shift-changes",
-  "checkin-checkout",
-  "employees"
+  "overtime"
 );
 
 export const reportQuerySchema = strictObject({

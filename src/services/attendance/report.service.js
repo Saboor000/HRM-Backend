@@ -2,8 +2,14 @@ import { supabase } from "../../config/supabase.js";
 import { employeeByAuth } from "./assignment.service.js";
 import { getEmployeeLeavesInRange } from "./checkin-checkout.service.js";
 import { evaluateAttendanceRecord, resolveEmployeeAttendancePolicy } from "./evaluated-attendance.service.js";
+import { formatTimestampInTimezone, resolveTimezone } from "../../utils/timezone.js";
 
 const error = (status, message) => Object.assign(new Error(message), { status });
+const ATTENDANCE_TIMEZONE = resolveTimezone(
+  process.env.ATTENDANCE_TIMEZONE,
+  process.env.PAYROLL_POLICY_TIMEZONE,
+  "Asia/Karachi"
+);
 const ATTENDANCE_SELECT = `
   *,
   employee:employee_id(id, first_name, last_name, designation, department),
@@ -21,6 +27,41 @@ const LEAVE_ON_DATE_CONDITION = (date) =>
 const PRESENT_STATUSES = new Set(["online", "offline", "PRESENT", "ON_LEAVE_WORKING"]);
 const ABSENT_STATUSES = new Set(["absent", "ABSENT"]);
 const LEAVE_STATUSES = new Set(["leave", "ON_LEAVE"]);
+const STATUS_FILTER_MAP = {
+  PRESENT: { type: "in", values: ["online", "offline"] },
+  ABSENT: { type: "eq", value: "absent" },
+  ON_LEAVE: { type: "eq", value: "leave" },
+  ON_LEAVE_WORKING: { type: "leave_working" },
+};
+
+const applyStatusFilter = (query, rawStatus) => {
+  if (!rawStatus) return query;
+
+  const normalized = String(rawStatus).trim();
+  const key = normalized.toUpperCase();
+
+  if (key === "ONLINE" || key === "OFFLINE" || key === "ABSENT" || key === "HOLIDAY" || key === "LEAVE" || key === "BREAK") {
+    return query.eq("status", normalized.toLowerCase());
+  }
+
+  const mapped = STATUS_FILTER_MAP[key];
+  if (!mapped) {
+    return query.eq("status", normalized);
+  }
+
+  if (mapped.type === "in") {
+    return query.in("status", mapped.values);
+  }
+
+  if (mapped.type === "leave_working") {
+    return query
+      .eq("leave_override", true)
+      .not("check_in_time", "is", null)
+      .is("check_out_time", null);
+  }
+
+  return query.eq("status", mapped.value);
+};
 
 const dateRange = (startDate, endDate) => {
   const dates = [];
@@ -81,6 +122,9 @@ const withAttendanceWorkMetrics = (record) => {
     worked_hours: workedHours,
     shift_hours: shiftHours,
     eligible_overtime_hours: round2(Number(record?.overtime_hours || 0)),
+    attendance_timezone: ATTENDANCE_TIMEZONE,
+    check_in_time_local: formatTimestampInTimezone(record?.check_in_time, ATTENDANCE_TIMEZONE),
+    check_out_time_local: formatTimestampInTimezone(record?.check_out_time, ATTENDANCE_TIMEZONE),
     // Optionally, expose evaluation.late_minutes at top-level for convenience
     ...(record.evaluation && typeof record.evaluation.late_minutes === 'number'
       ? { late_minutes: record.evaluation.late_minutes }
@@ -374,84 +418,6 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
   }
 };
 
-export const getCheckInCheckoutReportService = async (filters = {}) => {
-  try {
-    const page = Number.parseInt(filters.page, 10) || 1;
-    const limit = Number.parseInt(filters.limit, 10) || 10;
-    const from = (page - 1) * limit;
-
-    let query = supabase
-      .from("attendance_records")
-      .select(ATTENDANCE_SELECT, { count: "exact" })
-      .order("date", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (filters.employee_id) {
-      query = query.eq("employee_id", filters.employee_id);
-    }
-    if (filters.date) {
-      query = query.eq("date", toDateOnly(filters.date));
-    }
-    if (filters.start_date) {
-      query = query.gte("date", toDateOnly(filters.start_date));
-    }
-    if (filters.end_date) {
-      query = query.lte("date", toDateOnly(filters.end_date));
-    }
-    if (filters.status) {
-      query = query.eq("status", filters.status);
-    }
-    if (filters.shift_id) {
-      query = query.eq("shift_id", filters.shift_id);
-    }
-    if (filters.department) {
-      query = query.filter("employee.department", "eq", filters.department);
-    }
-    if (filters.has_overtime === true) {
-      query = query.gt("overtime_hours", 0);
-    }
-    if (filters.has_overtime === false) {
-      query = query.lte("overtime_hours", 0);
-    }
-
-    const { data, error: err, count } = await query.range(from, from + limit - 1);
-    if (err) throw error(400, err.message);
-
-    const records = (data || []).map(withAttendanceWorkMetrics);
-    const summary = {
-      total_records: count || 0,
-      present: records.filter((r) => PRESENT_STATUSES.has(r.status)).length,
-      absent: records.filter((r) => ABSENT_STATUSES.has(r.status)).length,
-      on_leave: records.filter((r) => LEAVE_STATUSES.has(r.status)).length,
-      with_overtime: records.filter((r) => Number(r.overtime_hours || 0) > 0).length,
-    };
-
-    return {
-      filters: {
-        employee_id: filters.employee_id || null,
-        date: filters.date || null,
-        start_date: filters.start_date || null,
-        end_date: filters.end_date || null,
-        status: filters.status || null,
-        shift_id: filters.shift_id || null,
-        department: filters.department || null,
-        has_overtime: filters.has_overtime ?? null,
-      },
-      summary,
-      records,
-      pagination: {
-        page,
-        limit,
-        total: count || 0,
-        pages: Math.ceil((count || 0) / limit),
-      },
-    };
-  } catch (e) {
-    if (e.status) throw e;
-    throw error(400, e.message);
-  }
-};
-
 export const getMyAttendanceReportService = async (userId, filters = {}) => {
   try {
     const employee = await employeeByAuth(userId);
@@ -476,7 +442,7 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
       query = query.lte("date", toDateOnly(filters.end_date));
     }
     if (filters.status) {
-      query = query.eq("status", filters.status);
+      query = applyStatusFilter(query, filters.status);
     }
     if (filters.shift_id) {
       query = query.eq("shift_id", filters.shift_id);
@@ -532,10 +498,10 @@ export const getMyAttendanceReportService = async (userId, filters = {}) => {
 
     const summary = {
       total_records: count || 0,
-      present: records.filter((r) => PRESENT_STATUSES.has(r.status)).length,
-      absent: records.filter((r) => ABSENT_STATUSES.has(r.status)).length,
-      on_leave: records.filter((r) => LEAVE_STATUSES.has(r.status)).length,
-      on_holiday: records.filter((r) => r.status === "holiday").length,
+      present: round2(evaluatedSummary.present_days),
+      absent: round2(evaluatedSummary.absent_days),
+      on_leave: round2(evaluatedSummary.paid_leave_days),
+      on_holiday: round2(evaluatedSummary.holiday_days),
       total_worked_hours: Math.round(records.reduce((sum, r) => sum + Number(r.duration_hours || 0), 0) * 100) / 100,
       evaluated: {
         total_working_days: evaluatedSummary.total_working_days,

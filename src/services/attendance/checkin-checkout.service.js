@@ -57,9 +57,7 @@ const parseDbTimestamp = (value) => {
 const round2 = (value) => Math.round(Number(value || 0) * 100) / 100;
 const getEarlyCheckInWindowMinutes = (attendancePolicy = {}) => {
   const configuredWindow = Number(
-    attendancePolicy.early_check_in_window_minutes ??
-      process.env.ATTENDANCE_EARLY_CHECKIN_WINDOW_MINUTES ??
-      DEFAULT_EARLY_CHECK_IN_WINDOW_MINUTES
+    attendancePolicy?.early_check_in_window_minutes ?? DEFAULT_EARLY_CHECK_IN_WINDOW_MINUTES
   );
 
   return Number.isFinite(configuredWindow)

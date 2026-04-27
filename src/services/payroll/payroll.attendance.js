@@ -208,7 +208,9 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
     await Promise.all([
       supabase
         .from("attendance_records")
-        .select("id, date, check_in_time, check_out_time, status, duration_hours, overtime_hours, leave_override, notes, created_at, updated_at")
+        .select(
+          "id, date, shift_id, check_in_time, check_out_time, status, duration_hours, overtime_hours, leave_override, notes, created_at, updated_at, shift:shift_id(id, name, start_time, end_time, duration_hours)"
+        )
         .eq("employee_id", employeeId)
         .gte("date", bounds.startDate)
         .lte("date", bounds.endDate),

@@ -102,7 +102,7 @@ export const signin = async (req, res, next) => {
 
     const { data: employee, error: employeeError } = await supabase
       .from("employees")
-      .select("designation")
+      .select("id, designation")
       .eq("auth_id", data.user.id)
       .maybeSingle();
 
@@ -115,6 +115,7 @@ export const signin = async (req, res, next) => {
       token,
       user: {
         id: data.user.id,
+        employee_id: employee?.id || null,
         email: data.user.email,
         role: jwtRole,
         designation: employee?.designation || "employee",
