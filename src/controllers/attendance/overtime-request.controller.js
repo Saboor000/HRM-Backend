@@ -2,6 +2,8 @@ import {
   createOvertimeRequestService,
   approveOvertimeRequestService,
   rejectOvertimeRequestService,
+  managerOvertimeActionService,
+  hrOvertimeActionService,
   cancelOvertimeRequestService,
   getOvertimeRequestsService,
   getOvertimeRequestByIdService,
@@ -43,7 +45,7 @@ export const createOvertimeRequest = async (req, res, next) => {
 
 export const getOvertimeRequests = async (req, res, next) => {
   try {
-    const data = await withPaginationFilters(req, ["employee_id", "status"], getOvertimeRequestsService);
+    const data = await withPaginationFilters(req, ["employee_id", "status", "manager_status", "hr_status"], getOvertimeRequestsService);
     send(res, 200, "Overtime requests retrieved successfully", data.data, data.pagination);
   } catch (err) {
     next(err);
@@ -97,6 +99,34 @@ export const cancelOvertimeRequest = async (req, res, next) => {
   try {
     const data = await cancelOvertimeRequestService(req.params.id, req.user.id);
     send(res, 200, "Overtime request cancelled successfully", data);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const managerOvertimeAction = async (req, res, next) => {
+  try {
+    const data = await managerOvertimeActionService(
+      req.params.id,
+      req.body.action,
+      req.user,
+      req.body.rejection_reason
+    );
+    send(res, 200, "Manager action applied successfully", data);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const hrOvertimeAction = async (req, res, next) => {
+  try {
+    const data = await hrOvertimeActionService(
+      req.params.id,
+      req.body.action,
+      req.user,
+      req.body.rejection_reason
+    );
+    send(res, 200, "HR action applied successfully", data);
   } catch (err) {
     next(err);
   }

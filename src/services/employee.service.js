@@ -38,8 +38,15 @@ const getUploads = async (files) => ({
   other_docs: await uploadMultiple(files, "otherDocs", "other"),
 });
 
-const employeeById = async (id, select = "*") =>
-  supabase.from("employees").select(select).eq("id", id).maybeSingle();
+const employeeById = async (id, select = "*", { includeDeleted = false } = {}) => {
+  let query = supabase.from("employees").select(select).eq("id", id);
+
+  if (!includeDeleted) {
+    query = query.is("deleted_at", null);
+  }
+
+  return query.maybeSingle();
+};
 
 const employeeByEmployeeId = async (employeeId) =>
   supabase
@@ -183,7 +190,7 @@ export const getAllEmployeesService = async (queryParams = {}) => {
   const from = (page - 1) * limit;
   const to = from + limit - 1;
 
-  let query = supabase.from("employees").select("*", { count: "exact" });
+  let query = supabase.from("employees").select("*", { count: "exact" }).is("deleted_at", null);
 
   if (role) query = query.eq("designation", role);
   if (department) query = query.ilike("department", `%${department}%`);
@@ -296,6 +303,7 @@ export const updateEmployeeService = async ({ id, body = {}, files }) => {
     .from("employees")
     .update(updates)
     .eq("id", id)
+    .is("deleted_at", null)
     .select("*")
     .maybeSingle();
 
@@ -307,7 +315,8 @@ export const updateEmployeeService = async ({ id, body = {}, files }) => {
 export const deleteEmployeeService = async ({ id }) => {
   const { data: employee, error: findError } = await employeeById(
     id,
-    "id, auth_id",
+    "id, auth_id, deleted_at",
+    { includeDeleted: true },
   );
 
   if (findError) {
@@ -316,9 +325,13 @@ export const deleteEmployeeService = async ({ id }) => {
 
   if (!employee) return employeeNotFound();
 
+  if (employee.deleted_at) {
+    return { message: "Employee is already deleted" };
+  }
+
   const { error: deleteEmployeeError } = await supabase
     .from("employees")
-    .delete()
+    .update({ deleted_at: new Date().toISOString() })
     .eq("id", id);
 
   if (deleteEmployeeError) {

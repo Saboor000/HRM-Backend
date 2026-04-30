@@ -42,7 +42,6 @@ export const updateEmployeeSchema = Joi.object({
   emergencyName: Joi.string().trim(),
   emergencyPhone: Joi.string().trim(),
   designation: designationSchema,
-  is_active: Joi.boolean(),
 })
   .min(1)
   .options({ allowUnknown: false });

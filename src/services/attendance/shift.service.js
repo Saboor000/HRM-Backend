@@ -95,20 +95,34 @@ export const createShiftService = async (payload) => {
   }
 };
 
+const toPagination = (page, limit, count) => ({
+  page,
+  limit,
+  total: count || 0,
+  pages: Math.ceil((count || 0) / limit),
+});
+
 export const getShiftsService = async (query = {}) => {
   try {
-    const { is_active } = query;
+    const { page = 1, limit = 10, is_active } = query;
+    const from = (page - 1) * limit;
 
-    let q = supabase.from("shifts").select("*").order("start_time", { ascending: true });
+    let q = supabase
+      .from("shifts")
+      .select("*", { count: "exact" })
+      .order("start_time", { ascending: true });
 
     if (is_active !== undefined) {
       q = q.eq("is_active", is_active);
     }
 
-    const { data, error: err } = await q;
+    const { data, error: err, count } = await q.range(from, from + limit - 1);
 
     if (err) throw error(400, err.message);
-    return data || [];
+    return {
+      data: data || [],
+      pagination: toPagination(page, limit, count),
+    };
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);

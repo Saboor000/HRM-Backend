@@ -335,6 +335,8 @@ export const createOvertimeRequestService = async (userId, payload) => {
         hours: requestedHours,
         reason: payload.reason || null,
         status: "pending",
+        manager_status: "pending",
+        hr_status: "pending",
         requested_at: new Date().toISOString(),
       })
       .select(OVERTIME_SELECT)
@@ -398,6 +400,7 @@ export const approveOvertimeRequestService = async (id, userId) => {
       throw error(400, firstError);
     }
 
+    // Direct approve (keeps backward compatibility) - treat as HR approval
     const approved = await updateOvertimeRequestStatus(id, approver.id, "approved");
     return {
       ...approved,
@@ -426,11 +429,107 @@ export const rejectOvertimeRequestService = async (id, userId) => {
 
     ensurePendingStatus(overtimeReq, "reject");
 
+    // Direct reject (treat as HR reject)
     return updateOvertimeRequestStatus(id, approver.id, "rejected");
   } catch (e) {
     if (e.status) throw e;
     throw error(400, e.message);
   }
+};
+
+// ---------- manager / hr decision flow ----------
+const getOvertimeRequestForDecision = async (id) => {
+  const { data, error: err } = await supabase
+    .from("overtime_requests")
+    .select("id, employee_id, status, manager_status, hr_status")
+    .eq("id", id)
+    .single();
+
+  if (err || !data) throw error(404, "Overtime request not found");
+  return data;
+};
+
+export const managerOvertimeActionService = async (id, action, user, reason) => {
+  const overtime = await getOvertimeRequestForDecision(id);
+  if (overtime.status !== "pending") throw error(409, "This overtime request cannot be modified in its current state");
+  if (overtime.manager_status !== "pending") throw error(409, "Manager has already taken action on this request");
+
+  const actor = await employeeByAuth(user.auth_id || user.id);
+  const now = new Date().toISOString();
+  const isRejected = action === "rejected";
+
+  if (!["approved", "rejected"].includes(action)) {
+    throw error(422, "Invalid manager action");
+  }
+
+  const updateData = {
+    manager_status: action,
+    manager_approved_at: now,
+    updated_at: now,
+  };
+
+  if (isRejected) {
+    updateData.status = "rejected";
+    updateData.rejected_at = now;
+    updateData.rejected_by = actor?.id || null;
+    updateData.rejection_reason = reason || null;
+  }
+
+  const { data, error: updateErr } = await supabase
+    .from("overtime_requests")
+    .update(updateData)
+    .eq("id", id)
+    .select(OVERTIME_APPROVAL_SELECT)
+    .single();
+
+  if (updateErr) throw error(400, updateErr.message);
+  return data;
+};
+
+export const hrOvertimeActionService = async (id, action, user, reason) => {
+  const overtime = await getOvertimeRequestForDecision(id);
+  if (overtime.status !== "pending") throw error(409, "This overtime request cannot be modified in its current state");
+  if (overtime.manager_status !== "approved") {
+    throw error(409, "HR action is allowed only after manager approval");
+  }
+  if (overtime.hr_status !== "pending") throw error(409, "HR has already taken action on this request");
+
+  const actor = await employeeByAuth(user.auth_id || user.id);
+  const now = new Date().toISOString();
+  const isApproved = action === "approved";
+  const isRejected = action === "rejected";
+
+  if (!["approved", "rejected"].includes(action)) {
+    throw error(422, "Invalid HR action");
+  }
+
+  const updateData = {
+    hr_status: action,
+    hr_approved_at: now,
+    updated_at: now,
+    status: action,
+  };
+
+  if (isApproved) {
+    updateData.approved_at = now;
+    updateData.approved_by = actor?.id || null;
+  }
+
+  if (isRejected) {
+    updateData.rejected_at = now;
+    updateData.rejected_by = actor?.id || null;
+    updateData.rejection_reason = reason || null;
+  }
+
+  const { data, error: updateErr } = await supabase
+    .from("overtime_requests")
+    .update(updateData)
+    .eq("id", id)
+    .select(OVERTIME_APPROVAL_SELECT)
+    .single();
+
+  if (updateErr) throw error(400, updateErr.message);
+  return data;
 };
 
 export const cancelOvertimeRequestService = async (id, userId) => {
@@ -457,7 +556,7 @@ export const getOvertimeRequestsService = async (filters, page, limit) => {
       .from("overtime_requests")
       .select(OVERTIME_SELECT, { count: "exact" });
 
-    query = applyExactFilters(query, filters, ["employee_id", "status"]);
+    query = applyExactFilters(query, filters, ["employee_id", "status", "manager_status", "hr_status"]);
 
     const { data, error: err, count } = await query
       .order("created_at", { ascending: false })

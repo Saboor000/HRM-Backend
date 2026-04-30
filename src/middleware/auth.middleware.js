@@ -31,6 +31,7 @@ export const authorize = (...designations) => {
         .from("employees")
         .select("designation")
         .eq("auth_id", req.user.auth_id)
+        .is("deleted_at", null)
         .single();
 
       if (error || !employee) {
