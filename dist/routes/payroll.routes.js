@@ -1,8 +1,8 @@
 import express from "express";
-import { approvePayroll, createSalaryStructure, generatePayroll, getPayrollByEmployee, getMyPayroll, getSalaryStructureByEmployee, getSalaryStructureById, getSalaryStructures, getPayslip, markPayrollPaid, regeneratePayroll, updateSalaryStructure, } from "../controllers/payroll.controller.js";
+import { approvePayroll, createSalaryStructure, getAllPayrolls, generatePayroll, getPayrollByEmployee, getMyPayroll, getSalaryStructureByEmployee, getSalaryStructureById, getSalaryStructures, getPayslip, markPayrollPaid, regeneratePayroll, updateSalaryStructure, } from "../controllers/payroll.controller.js";
 import { protect, authorize } from "../middleware/auth.middleware.js";
 import { validateBody, validateParams, validateQuery, } from "../middleware/validateRequest.middleware.js";
-import { generatePayrollSchema, salaryStructureCreateSchema, salaryStructureEmployeeParamSchema, salaryStructureIdParamSchema, salaryStructureListQuerySchema, salaryStructureUpdateSchema, payrollEmployeeParamSchema, payrollEmployeeQuerySchema, payrollIdParamSchema, } from "../validators/payroll.validator.js";
+import { generatePayrollSchema, salaryStructureCreateSchema, salaryStructureEmployeeParamSchema, salaryStructureIdParamSchema, salaryStructureListQuerySchema, salaryStructureUpdateSchema, payrollListQuerySchema, payrollEmployeeParamSchema, payrollEmployeeQuerySchema, payrollIdParamSchema, } from "../validators/payroll.validator.js";
 const payrollRouter = express.Router();
 const adminHr = authorize("admin", "hr");
 const adminHrEmployee = authorize("admin", "hr", "employee");
@@ -15,6 +15,7 @@ payrollRouter.get("/salary-structures/:id", adminHr, validateParams(salaryStruct
 payrollRouter.patch("/salary-structures/:id", adminHr, validateParams(salaryStructureIdParamSchema), validateBody(salaryStructureUpdateSchema), updateSalaryStructure);
 payrollRouter.post("/payroll/generate", adminHr, validateBody(generatePayrollSchema), generatePayroll);
 payrollRouter.post("/payroll/:id/regenerate", adminHr, validatePayrollId, regeneratePayroll);
+payrollRouter.get("/payrolls", adminHr, validateQuery(payrollListQuerySchema), getAllPayrolls);
 payrollRouter.get("/payroll/me", adminHrEmployee, validateQuery(payrollEmployeeQuerySchema), getMyPayroll);
 payrollRouter.get("/payroll/:employeeId", adminHrEmployee, validateParams(payrollEmployeeParamSchema), validateQuery(payrollEmployeeQuerySchema), getPayrollByEmployee);
 payrollRouter.post("/payroll/:id/approve", adminHr, validatePayrollId, approvePayroll);
