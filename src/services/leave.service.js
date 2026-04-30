@@ -24,8 +24,11 @@ const employeeOptional = (id) => employeeByAuth(id, true);
 const isEmployeeUser = (user) => user.role === "user" || user.designation === "employee";
 
 // ---------- date ----------
-const toDate = (v) =>
-  !v ? null : new Date(v).toISOString().slice(0, 10);
+const toDate = (v) => {
+  if (!v) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return new Date(v).toISOString().slice(0, 10);
+};
 
 const dateRange = (startDate, endDate) => {
   const dates = [];
@@ -205,6 +208,43 @@ const formatLeaveResponse = (leave) => {
   return rest;
 };
 
+const leaveDateValue = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+};
+
+const matchesLeaveListFilters = (leave, filters) => {
+  if (filters.employeeId && leave.employee_id !== filters.employeeId) return false;
+  if (filters.status && leave.status !== filters.status) return false;
+  if (filters.managerStatus && leave.manager_status !== filters.managerStatus) return false;
+  if (filters.hrStatus && leave.hr_status !== filters.hrStatus) return false;
+  if (filters.leaveType && leave.leave_type !== filters.leaveType) return false;
+
+  const leaveStartDate = leaveDateValue(leave.start_date);
+  const leaveEndDate = leaveDateValue(leave.end_date || leave.start_date);
+
+  // Date range check: leave must overlap with filter range
+  // Reject if leave ends before filter starts, or if leave starts after filter ends
+  if (filters.startDate && leaveEndDate && leaveEndDate < filters.startDate) return false;
+  if (filters.endDate && leaveStartDate && leaveStartDate > filters.endDate) return false;
+
+  return true;
+};
+
+const sortLeavesBySubmittedAt = (left, right, sortOrder) => {
+  const leftTime = new Date(left.submitted_at || 0).getTime();
+  const rightTime = new Date(right.submitted_at || 0).getTime();
+
+  if (leftTime !== rightTime) {
+    return sortOrder === "asc" ? leftTime - rightTime : rightTime - leftTime;
+  }
+
+  return sortOrder === "asc"
+    ? String(left.id || "").localeCompare(String(right.id || ""))
+    : String(right.id || "").localeCompare(String(left.id || ""));
+};
+
 // ---------- create ----------
 export const createLeaveService = async (payload, user) => {
   const employee = await employeeByAuth(user.id);
@@ -333,37 +373,56 @@ export const getLeavesService = async ({ user, query = {}, ownOnly }) => {
     sortOrder = "desc",
   } = query;
 
-  const from = (page - 1) * limit;
+  const pageNumber = Number(page) || 1;
+  const limitNumber = Number(limit) || 10;
+  const from = (pageNumber - 1) * limitNumber;
 
   let q = supabase
     .from("leaves")
-    .select(leaveSelect)
-    .order("submitted_at", { ascending: sortOrder === "asc" })
-    .range(from, from + limit - 1);
+    .select(leaveSelect, { count: "exact" })
+    .order("submitted_at", { ascending: sortOrder === "asc" });
 
-  if (ownOnly || isEmployeeUser(user)) {
+  let employeeScopeId = null;
+  if (ownOnly || user.designation === "employee") {
     const emp = await employeeByAuth(user.auth_id || user.id);
+    employeeScopeId = emp.id;
     q = q.eq("employee_id", emp.id);
   }
 
-  const exactFilters = { employee_id, status, manager_status, hr_status, leave_type };
-  for (const [key, value] of Object.entries(exactFilters)) {
-    if (value) q = q.eq(key, value);
-  }
-
-  if (start_date) q = q.gte("start_date", toDate(start_date));
-  if (end_date) q = q.lte("end_date", toDate(end_date));
+  if (employee_id) q = q.eq("employee_id", employee_id);
+  
+  // Apply explicit filters if provided, otherwise show all history
+  if (status) q = q.eq("status", status);
+  if (manager_status) q = q.eq("manager_status", manager_status);
+  if (hr_status) q = q.eq("hr_status", hr_status);
+  if (leave_type) q = q.eq("leave_type", leave_type);
 
   const { data, error: err, count } = await q;
   if (err) throw error(400, err.message);
 
+  const filteredLeaves = (data || [])
+    .filter((leave) =>
+      matchesLeaveListFilters(leave, {
+        employeeId: employee_id || employeeScopeId,
+        status,
+        managerStatus: manager_status,
+        hrStatus: hr_status,
+        leaveType: leave_type,
+        startDate: start_date ? toDate(start_date) : null,
+        endDate: end_date ? toDate(end_date) : null,
+      }),
+    )
+    .sort((left, right) => sortLeavesBySubmittedAt(left, right, sortOrder));
+
+  const paginatedLeaves = filteredLeaves.slice(from, from + limitNumber);
+
   return {
-    leaves: (data || []).map(formatLeaveResponse),
+    leaves: paginatedLeaves.map(formatLeaveResponse),
     pagination: {
-      page,
-      limit,
-      total: count || 0,
-      totalPages: count ? Math.ceil(count / limit) : 0,
+      page: pageNumber,
+      limit: limitNumber,
+      total: filteredLeaves.length || count || 0,
+      totalPages: filteredLeaves.length ? Math.ceil(filteredLeaves.length / limitNumber) : 0,
     },
   };
 };

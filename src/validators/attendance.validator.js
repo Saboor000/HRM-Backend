@@ -179,6 +179,15 @@ export const createOvertimeRequestSchema = strictObject({
     return value;
   });
 
+export const overtimeDecisionSchema = strictObject({
+  action: Joi.string().valid("approved", "rejected").required(),
+  rejection_reason: Joi.when("action", {
+    is: "rejected",
+    then: Joi.string().trim().required(),
+    otherwise: Joi.string().trim().allow("", null).optional(),
+  }),
+});
+
 export const overtimeRequestIdParamSchema = strictObject({ id: uuidRule.required() });
 
 export const overtimeRequestQuerySchema = strictObject({
@@ -186,6 +195,8 @@ export const overtimeRequestQuerySchema = strictObject({
   limit: limitRule,
   employee_id: uuidRule.allow(null),
   status: requestStatusRule.allow(null),
+  manager_status: Joi.string().valid("pending", "approved", "rejected").allow(null),
+  hr_status: Joi.string().valid("pending", "approved", "rejected").allow(null),
 });
 
 export const regularizationIdParamSchema = strictObject({ id: uuidRule.required() });

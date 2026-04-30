@@ -8,11 +8,14 @@ import {
   getOvertimeRequestById,
   approveOvertimeRequest,
   rejectOvertimeRequest,
+  managerOvertimeAction,
+  hrOvertimeAction,
   cancelOvertimeRequest,
 } from "../../controllers/attendance/overtime-request.controller.js";
 import {
   createOvertimeRequestSchema,
   overtimeRequestIdParamSchema,
+  overtimeDecisionSchema,
   overtimeRequestQuerySchema,
 } from "../../validators/attendance.validator.js";
 
@@ -29,17 +32,19 @@ router.get(
   validateOvertimeRequestId,
   getOvertimeRequestById
 );
-router.put(
-  "/attendance/overtime-requests/:id/approve",
-  adminHr,
+router.patch(
+  "/attendance/overtime-requests/:id/manager-action",
+  authorize("admin", "manager"),
   validateOvertimeRequestId,
-  approveOvertimeRequest
+  validateBody(overtimeDecisionSchema),
+  managerOvertimeAction
 );
-router.put(
-  "/attendance/overtime-requests/:id/reject",
+router.patch(
+  "/attendance/overtime-requests/:id/hr-action",
   adminHr,
   validateOvertimeRequestId,
-  rejectOvertimeRequest
+  validateBody(overtimeDecisionSchema),
+  hrOvertimeAction
 );
 router.put(
   "/attendance/overtime-requests/:id/cancel",

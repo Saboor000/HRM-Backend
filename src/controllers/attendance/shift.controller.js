@@ -28,9 +28,13 @@ export const createShift = async (req, res, next) => {
 
 export const getShifts = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
-    const data = await getShiftsService(toInt(page), toInt(limit));
-    send(res, 200, "Shifts retrieved successfully", data, data.pagination);
+    const { page = 1, limit = 10, is_active } = req.query;
+    const data = await getShiftsService({
+      page: toInt(page),
+      limit: toInt(limit),
+      ...(is_active !== undefined ? { is_active: is_active === "true" } : {}),
+    });
+    send(res, 200, "Shifts retrieved successfully", data.data, data.pagination);
   } catch (err) {
     next(err);
   }
