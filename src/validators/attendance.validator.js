@@ -246,19 +246,30 @@ export const lateRegularizationListQuerySchema = strictObject({
 });
 
 const reportTypeRule = Joi.string().valid(
-  "daily",
-  "weekly",
-  "monthly",
-  "summary",
+  // attendance sub-reports (grouped under report_type=attendance)
+  "attendance",
+  // standalone report types
   "leaves",
-  "overtime"
+  "overtime",
+  "shifts",
+  "assignments",
+  "shift_requests",
+  "late_regularization"
 );
+
+// attendance sub-type: daily | weekly | monthly | summary
+const attendanceSubTypeRule = Joi.string().valid("daily", "weekly", "monthly", "summary");
 
 export const reportQuerySchema = strictObject({
   report_type: reportTypeRule.required(),
+
+  // attendance sub-type (required when report_type=attendance)
+  sub_type: attendanceSubTypeRule,
+
   page: pageRule,
   limit: limitRule,
 
+  // date filters
   date: friendlyDateRule,
   week_of: friendlyDateRule,
   month: Joi.number().integer().min(1).max(12),
@@ -266,11 +277,13 @@ export const reportQuerySchema = strictObject({
   start_date: friendlyDateRule,
   end_date: friendlyDateRule,
 
+  // scope filters
   department: Joi.string().trim().max(100),
   team_id: uuidRule,
   employee_id: uuidRule,
   shift_id: uuidRule,
 
+  // status filters
   status: Joi.string().trim().valid(
     "pending",
     "approved",
@@ -289,8 +302,31 @@ export const reportQuerySchema = strictObject({
   ),
   manager_status: Joi.string().valid("pending", "approved", "rejected"),
   hr_status: Joi.string().valid("pending", "approved", "rejected"),
+
+  // leave-specific
   leave_type: Joi.string().valid("full_day", "half_day", "short_leave"),
+
+  // late-regularization-specific
+  regularization_type: Joi.string().valid(
+    "late_arrival",
+    "missed_checkin",
+    "early_checkout",
+    "short_hours",
+    "shift_mismatch",
+    "system_error",
+    "transport_issue",
+    "weather_issue",
+    "medical_reason",
+    "official_work",
+    "emergency",
+    "other"
+  ),
+  attendance_id: uuidRule,
+
+  // shift-specific
   is_active: Joi.boolean(),
+
+  // misc
   has_overtime: Joi.boolean(),
   search: Joi.string().trim().max(100).allow(""),
   role: Joi.string().trim().valid("admin", "employee", "hr", "manager"),
@@ -300,19 +336,25 @@ export const reportQuerySchema = strictObject({
   sortOrder: Joi.string().trim().valid("asc", "desc").default("desc"),
 })
   .custom((value, helpers) => {
-    const { report_type: type } = value;
+    const { report_type: type, sub_type: subType } = value;
 
-    if (type === "daily" && !value.date) {
-      return helpers.message("date is required for daily report");
-    }
-    if (type === "weekly" && (!value.week_of || !value.year)) {
-      return helpers.message("week_of and year are required for weekly report");
-    }
-    if (type === "monthly" && (!value.month || !value.year)) {
-      return helpers.message("month and year are required for monthly report");
-    }
-    if (type === "summary" && (!value.start_date || !value.end_date)) {
-      return helpers.message("start_date and end_date are required for summary report");
+    // attendance report requires a sub_type
+    if (type === "attendance") {
+      if (!subType) {
+        return helpers.message("sub_type is required for attendance report (daily | weekly | monthly | summary)");
+      }
+      if (subType === "daily" && !value.date) {
+        return helpers.message("date is required for attendance daily report");
+      }
+      if (subType === "weekly" && (!value.week_of || !value.year)) {
+        return helpers.message("week_of and year are required for attendance weekly report");
+      }
+      if (subType === "monthly" && (!value.month || !value.year)) {
+        return helpers.message("month and year are required for attendance monthly report");
+      }
+      if (subType === "summary" && (!value.start_date || !value.end_date)) {
+        return helpers.message("start_date and end_date are required for attendance summary report");
+      }
     }
 
     if (value.start_date && value.end_date) {

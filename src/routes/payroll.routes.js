@@ -2,6 +2,7 @@ import express from "express";
 import {
   approvePayroll,
   createSalaryStructure,
+  getAllPayrolls,
   generatePayroll,
   getPayrollByEmployee,
   getMyPayroll,
@@ -26,6 +27,7 @@ import {
   salaryStructureIdParamSchema,
   salaryStructureListQuerySchema,
   salaryStructureUpdateSchema,
+  payrollListQuerySchema,
   payrollEmployeeParamSchema,
   payrollEmployeeQuerySchema,
   payrollIdParamSchema,
@@ -82,6 +84,13 @@ payrollRouter.post(
   adminHr,
   validatePayrollId,
   regeneratePayroll
+);
+
+payrollRouter.get(
+  "/payrolls",
+  adminHr,
+  validateQuery(payrollListQuerySchema),
+  getAllPayrolls
 );
 
 payrollRouter.get(

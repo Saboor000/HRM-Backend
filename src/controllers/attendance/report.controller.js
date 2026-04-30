@@ -7,6 +7,10 @@ import {
 } from "../../services/attendance/report.service.js";
 import { getLeavesService } from "../../services/leave.service.js";
 import { getOvertimeRequestsService } from "../../services/attendance/overtime-request.service.js";
+import { getShiftsService } from "../../services/attendance/shift.service.js";
+import { getAssignmentsService } from "../../services/attendance/assignment.service.js";
+import { getShiftChangeRequestsService } from "../../services/attendance/shift-request.service.js";
+import { listLateRegularizationsService } from "../../services/attendance/late-regularization.service.js";
 
 const toInt = (value) => Number.parseInt(value, 10);
 const toIsoDate = (value) => {
@@ -68,44 +72,52 @@ export const getAttendanceReport = async (req, res, next) => {
     const query = req.validatedQuery || req.query;
     const type = query.report_type;
 
-    if (type === "daily") {
-      const data = await getDailyAttendanceReportService(
-        requireIsoDate(query.date, "date"),
-        query.department
-      );
-      send(res, 200, "Daily report retrieved successfully", data);
-      return;
+    // ── attendance (daily / weekly / monthly / summary) ──────────────────────
+    if (type === "attendance") {
+      const subType = query.sub_type;
+
+      if (subType === "daily") {
+        const data = await getDailyAttendanceReportService(
+          requireIsoDate(query.date, "date"),
+          query.department
+        );
+        send(res, 200, "Daily attendance report retrieved successfully", data);
+        return;
+      }
+
+      if (subType === "weekly") {
+        const data = await getWeeklyAttendanceReportService(
+          requireIsoDate(query.week_of, "week_of"),
+          toInt(query.year)
+        );
+        send(res, 200, "Weekly attendance report retrieved successfully", data);
+        return;
+      }
+
+      if (subType === "monthly") {
+        const data = await getMonthlyAttendanceReportService(
+          toInt(query.month),
+          toInt(query.year),
+          query.department
+        );
+        send(res, 200, "Monthly attendance report retrieved successfully", data);
+        return;
+      }
+
+      if (subType === "summary") {
+        const data = await getTeamSummaryReportService(
+          requireIsoDate(query.start_date, "start_date"),
+          requireIsoDate(query.end_date, "end_date"),
+          query.team_id
+        );
+        send(res, 200, "Team summary attendance report retrieved successfully", data);
+        return;
+      }
+
+      throw Object.assign(new Error("Unsupported sub_type for attendance report"), { status: 422 });
     }
 
-    if (type === "weekly") {
-      const data = await getWeeklyAttendanceReportService(
-        requireIsoDate(query.week_of, "week_of"),
-        toInt(query.year)
-      );
-      send(res, 200, "Weekly report retrieved successfully", data);
-      return;
-    }
-
-    if (type === "monthly") {
-      const data = await getMonthlyAttendanceReportService(
-        toInt(query.month),
-        toInt(query.year),
-        query.department
-      );
-      send(res, 200, "Monthly report retrieved successfully", data);
-      return;
-    }
-
-    if (type === "summary") {
-      const data = await getTeamSummaryReportService(
-        requireIsoDate(query.start_date, "start_date"),
-        requireIsoDate(query.end_date, "end_date"),
-        query.team_id
-      );
-      send(res, 200, "Team summary report retrieved successfully", data);
-      return;
-    }
-
+    // ── leaves ────────────────────────────────────────────────────────────────
     if (type === "leaves") {
       const leaveQuery = {
         ...query,
@@ -117,15 +129,73 @@ export const getAttendanceReport = async (req, res, next) => {
       return;
     }
 
+    // ── overtime ──────────────────────────────────────────────────────────────
     if (type === "overtime") {
       const page = toInt(query.page ?? 1);
       const limit = toInt(query.limit ?? 10);
       const filters = {};
       if (query.employee_id) filters.employee_id = query.employee_id;
       if (query.status) filters.status = query.status;
+      if (query.manager_status) filters.manager_status = query.manager_status;
+      if (query.hr_status) filters.hr_status = query.hr_status;
 
       const data = await getOvertimeRequestsService(filters, page, limit);
       send(res, 200, "Overtime report retrieved successfully", data.data, data.pagination);
+      return;
+    }
+
+    // ── shifts ────────────────────────────────────────────────────────────────
+    if (type === "shifts") {
+      const data = await getShiftsService({
+        page: toInt(query.page ?? 1),
+        limit: toInt(query.limit ?? 10),
+        ...(query.is_active !== undefined ? { is_active: query.is_active } : {}),
+      });
+      send(res, 200, "Shifts report retrieved successfully", data.data, data.pagination);
+      return;
+    }
+
+    // ── shift assignments ─────────────────────────────────────────────────────
+    if (type === "assignments") {
+      const data = await getAssignmentsService({
+        page: toInt(query.page ?? 1),
+        limit: toInt(query.limit ?? 10),
+        ...(query.employee_id ? { employee_id: query.employee_id } : {}),
+        ...(query.shift_id ? { shift_id: query.shift_id } : {}),
+        ...(query.is_active !== undefined ? { is_active: query.is_active } : {}),
+      });
+      send(res, 200, "Shift assignments report retrieved successfully", data.data, data.pagination);
+      return;
+    }
+
+    // ── shift change requests ─────────────────────────────────────────────────
+    if (type === "shift_requests") {
+      const page = toInt(query.page ?? 1);
+      const limit = toInt(query.limit ?? 10);
+      const filters = {};
+      if (query.employee_id) filters.employee_id = query.employee_id;
+      if (query.status) filters.status = query.status;
+
+      const data = await getShiftChangeRequestsService(filters, page, limit);
+      send(res, 200, "Shift change requests report retrieved successfully", data.data, data.pagination);
+      return;
+    }
+
+    // ── late regularization ───────────────────────────────────────────────────
+    if (type === "late_regularization") {
+      // listLateRegularizationsService scopes by role internally; pass admin auth id
+      const lrQuery = {
+        page: query.page ?? 1,
+        limit: query.limit ?? 10,
+        ...(query.employee_id ? { employee_id: query.employee_id } : {}),
+        ...(query.attendance_id ? { attendance_id: query.attendance_id } : {}),
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.regularization_type ? { type: query.regularization_type } : {}),
+        ...(query.start_date ? { start_date: requireIsoDate(query.start_date, "start_date") } : {}),
+        ...(query.end_date ? { end_date: requireIsoDate(query.end_date, "end_date") } : {}),
+      };
+      const data = await listLateRegularizationsService(req.user.id, lrQuery);
+      send(res, 200, "Late regularization report retrieved successfully", data.data, data.pagination);
       return;
     }
 

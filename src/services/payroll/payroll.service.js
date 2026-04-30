@@ -1,5 +1,6 @@
 import { calculatePayrollSnapshot } from "./payroll.calculator.js";
 import { getPayrollPeriodSnapshot } from "./payroll.attendance.js";
+import { supabase } from "../../config/supabase.js";
 import {
   fetchPayrollById,
   deletePayrollById,
@@ -507,6 +508,47 @@ export const getPayrollByEmployeeService = async (employeeId, query = {}) => {
         limit: result.limit,
         total: result.count || 0,
         pages: Math.ceil((result.count || 0) / result.limit),
+      },
+    };
+  } catch (e) {
+    if (e.status) throw e;
+    throw error(400, e.message);
+  }
+};
+
+export const getAllPayrollsService = async (query = {}) => {
+  try {
+    const page = Number(query.page || 1);
+    const limit = Number(query.limit || 10);
+    const from = (page - 1) * limit;
+
+    let payrollQuery = supabase
+      .from("payrolls")
+      .select("*", { count: "exact" })
+      .order("year", { ascending: false })
+      .order("month", { ascending: false });
+
+    if (query.employee_id) payrollQuery = payrollQuery.eq("employee_id", query.employee_id);
+    if (query.status) payrollQuery = payrollQuery.eq("status", query.status);
+    if (query.month) payrollQuery = payrollQuery.eq("month", Number(query.month));
+    if (query.year) payrollQuery = payrollQuery.eq("year", Number(query.year));
+
+    const { data, error: err, count } = await payrollQuery.range(from, from + limit - 1);
+    if (err) throw error(400, err.message);
+
+    const payrolls = data || [];
+    const employeeMap = await getEmployeesByIds(payrolls.map((row) => row.employee_id));
+
+    return {
+      payrolls: payrolls.map((row) => ({
+        ...row,
+        employee: employeeMap.get(row.employee_id) || null,
+      })),
+      pagination: {
+        page,
+        limit,
+        total: count || 0,
+        pages: Math.ceil((count || 0) / limit),
       },
     };
   } catch (e) {
