@@ -341,12 +341,15 @@ export const hrLeaveActionService = async (id, action, user, reason) => {
   if (isApproved) {
     updateData.approved_at = now;
     updateData.approved_by = actor?.id || null;
+    updateData.is_paid = true;
+    updateData.paid_at = now;
   }
 
   if (isRejected) {
     updateData.rejected_at = now;
     updateData.rejected_by = actor?.id || null;
     updateData.rejection_reason = reason || null;
+    updateData.is_paid = false;
   }
 
   const data = await updateLeaveAndFetch(id, updateData);

@@ -248,6 +248,7 @@ export const getWeeklyAttendanceReportService = async (weekOf, year) => {
       .from("leaves")
       .select(LEAVE_SELECT)
       .eq("status", "approved")
+      .eq("is_paid", true)
       .gte("end_date", startDateStr)
       .lte("start_date", endDateStr)
       .order("start_date", { ascending: true });
@@ -326,6 +327,7 @@ export const getMonthlyAttendanceReportService = async (month, year, department)
       .from("leaves")
       .select(LEAVE_SELECT)
       .eq("status", "approved")
+      .eq("is_paid", true)
       .gte("end_date", startDateStr)
       .lte("start_date", endDateStr);
     queryLeaves = applyDepartmentFilter(queryLeaves, department);
@@ -384,6 +386,7 @@ export const getTeamSummaryReportService = async (startDate, endDate, teamId) =>
       .from("leaves")
       .select(LEAVE_SELECT)
       .eq("status", "approved")
+      .eq("is_paid", true)
       .gte("end_date", startDate)
       .lte("start_date", endDate);
     queryLeaves = applyDepartmentFilter(queryLeaves, teamId);

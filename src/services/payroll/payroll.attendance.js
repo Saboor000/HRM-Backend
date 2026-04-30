@@ -47,9 +47,98 @@ const groupLeavesByDate = (leaveRows, workingDates) => {
 
 const isLeavePaidByPolicy = (leave) => {
   if (!leave) return false;
-  const status = String(leave.status || "").toLowerCase();
-  const hrStatus = String(leave.hr_status || "").toLowerCase();
-  return status === "approved" || hrStatus === "approved" || Boolean(leave.approved_by);
+  // Only mark as paid if HR explicitly approved AND is_paid flag is true
+  const hrApproved = String(leave.hr_status || "").toLowerCase() === "approved";
+  const isPaidFlagSet = Boolean(leave.is_paid === true);
+  return hrApproved && isPaidFlagSet;
+};
+
+const summarizeLeaveRequests = (leaveRows = []) => {
+  const summary = {
+    total_requests: 0,
+    pending_requests: 0,
+    manager_approved_requests: 0,
+    hr_approved_requests: 0,
+    rejected_requests: 0,
+    approved_paid_requests: 0,
+    approved_unpaid_requests: 0,
+    paid_leave_days: 0,
+    unpaid_leave_days: 0,
+  };
+
+  for (const leave of leaveRows || []) {
+    summary.total_requests += 1;
+    const status = String(leave?.status || "").toLowerCase();
+    const managerStatus = String(leave?.manager_status || "").toLowerCase();
+    const hrStatus = String(leave?.hr_status || "").toLowerCase();
+    const isPaid = Boolean(leave?.is_paid === true);
+
+    if (status === "pending") summary.pending_requests += 1;
+    if (managerStatus === "approved") summary.manager_approved_requests += 1;
+    if (hrStatus === "approved") summary.hr_approved_requests += 1;
+    if (status === "rejected") summary.rejected_requests += 1;
+    if (status === "approved" && isPaid) summary.approved_paid_requests += 1;
+    if (status === "approved" && !isPaid) summary.approved_unpaid_requests += 1;
+
+    if (status === "approved") {
+      const days = Number(leave?.total_days || 0);
+      if (isPaid) {
+        summary.paid_leave_days += days;
+      } else {
+        summary.unpaid_leave_days += days;
+      }
+    }
+  }
+
+  return {
+    ...summary,
+    paid_leave_days: round2(summary.paid_leave_days),
+    unpaid_leave_days: round2(summary.unpaid_leave_days),
+  };
+};
+
+const summarizeOvertimeRequests = (overtimeRows = []) => {
+  const summary = {
+    total_requests: 0,
+    pending_requests: 0,
+    manager_approved_requests: 0,
+    hr_approved_requests: 0,
+    rejected_requests: 0,
+    approved_paid_requests: 0,
+    approved_unpaid_requests: 0,
+    paid_hours: 0,
+    unpaid_hours: 0,
+  };
+
+  for (const overtime of overtimeRows || []) {
+    summary.total_requests += 1;
+    const status = String(overtime?.status || "").toLowerCase();
+    const managerStatus = String(overtime?.manager_status || "").toLowerCase();
+    const hrStatus = String(overtime?.hr_status || "").toLowerCase();
+    const isPaid = Boolean(overtime?.is_paid === true);
+    const hours = Number(overtime?.hours || 0);
+
+    if (status === "pending") summary.pending_requests += 1;
+    if (managerStatus === "approved") summary.manager_approved_requests += 1;
+    if (hrStatus === "approved") summary.hr_approved_requests += 1;
+    if (status === "rejected") summary.rejected_requests += 1;
+    if (status === "approved" && isPaid) summary.approved_paid_requests += 1;
+    if (status === "approved" && !isPaid) summary.approved_unpaid_requests += 1;
+
+    if (status === "approved") {
+      if (isPaid) {
+        summary.paid_hours += hours;
+      } else {
+        summary.unpaid_hours += hours;
+      }
+    }
+  }
+
+  return {
+    ...summary,
+    paid_hours: round2(summary.paid_hours),
+    unpaid_hours: round2(summary.unpaid_hours),
+  };
 };
 
 const resolveShiftAssignmentByDate = (assignments = [], workingDates = []) => {
@@ -81,7 +170,7 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
   const [
     { data: attendanceRows, error: attendanceErr },
     { data: leaveRows, error: leaveErr },
-    { data: overtimeApprovalsData, error: overtimeApprovalsErr },
+    { data: overtimeRows, error: overtimeRowsErr },
     { data: assignmentsRows, error: assignmentsErr },
   ] =
     await Promise.all([
@@ -95,15 +184,14 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
         .lte("date", bounds.endDate),
       supabase
         .from("leaves")
-        .select("id, employee_id, leave_type, start_date, end_date, start_time, end_time, half_day_type, status, approved_by, hr_status, reason, total_days, total_hours, approved_at, rejected_at")
+        .select("id, employee_id, leave_type, start_date, end_date, start_time, end_time, half_day_type, status, manager_status, hr_status, is_paid, approved_by, rejected_by, rejection_reason, manager_approved_at, hr_approved_at, approved_at, rejected_at, paid_at, reason, total_days, total_hours")
         .eq("employee_id", employeeId)
         .gte("end_date", bounds.startDate)
         .lte("start_date", bounds.endDate),
       supabase
         .from("overtime_requests")
-        .select("id, date, hours, status, approved_by, approved_at, reason")
+        .select("id, date, hours, status, manager_status, hr_status, is_paid, approved_by, rejected_by, rejection_reason, manager_approved_at, hr_approved_at, approved_at, rejected_at, paid_at, reason")
         .eq("employee_id", employeeId)
-        .eq("status", "approved")
         .gte("date", bounds.startDate)
         .lte("date", bounds.endDate),
       supabase
@@ -124,19 +212,25 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
 
   if (attendanceErr) throw error(400, attendanceErr.message);
   if (leaveErr) throw error(400, leaveErr.message);
-  if (overtimeApprovalsErr) throw error(400, overtimeApprovalsErr.message);
+  if (overtimeRowsErr) throw error(400, overtimeRowsErr.message);
   if (assignmentsErr) throw error(400, assignmentsErr.message);
 
   const attendanceByDate = groupAttendanceByDate(attendanceRows, attendanceRules);
-  const leaveByDate = groupLeavesByDate(leaveRows, bounds.workingDates);
-  const leaveById = new Map((leaveRows || []).map((leave) => [String(leave.id), leave]));
+  const leaveModuleSummary = summarizeLeaveRequests(leaveRows || []);
+  const overtimeModuleSummary = summarizeOvertimeRequests(overtimeRows || []);
+  const payableLeaveRows = (leaveRows || []).filter((leave) => isLeavePaidByPolicy(leave));
+  const payableOvertimeRows = (overtimeRows || []).filter(
+    (row) => String(row?.status || "").toLowerCase() === "approved" && Boolean(row?.is_paid === true)
+  );
+  const leaveByDate = groupLeavesByDate(payableLeaveRows, bounds.workingDates);
+  const leaveById = new Map((payableLeaveRows || []).map((leave) => [String(leave.id), leave]));
   const shiftByDate = resolveShiftAssignmentByDate(assignmentsRows || [], bounds.workingDates);
   const regularizationByAttendanceId = await getApprovedRegularizationsForAttendanceIds(
     (attendanceRows || []).map((row) => row.id).filter(Boolean)
   );
   const attendanceEvaluation = evaluateAttendancePeriod({
     attendanceRows: attendanceRows || [],
-    leaveRows: leaveRows || [],
+    leaveRows: payableLeaveRows,
     assignmentsRows: assignmentsRows || [],
     regularizationByAttendanceId,
     periodBounds: bounds,
@@ -163,7 +257,7 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
   // - Unapproved: added back to working hours as regular time
   const overtimeApprovalSplit = separateApprovedOvertimeByApproval(
     potentialOvertimeRows,
-    overtimeApprovalsData || []
+    payableOvertimeRows
   );
   
   // Apply constraints only to approved overtime
@@ -315,6 +409,8 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
         unapproved_overtime: totalUnapprovedOvertime,
         note: 'approved_overtime paid at overtime rate; unapproved_overtime added to working_hours as regular pay',
       },
+      leave_module_summary: leaveModuleSummary,
+      overtime_module_summary: overtimeModuleSummary,
       overtime_hours: round2(overtimeHours),
       late_arrivals: lateArrivals,
       late_penalty_days: 0,
@@ -350,6 +446,9 @@ export const getPayrollPeriodSnapshot = async (employeeId, month, year, payrollR
     leaveSummary: {
       paid_leave_days: round2(paidLeaveDays),
       unpaid_leave_days: round2(unpaidLeaveDays),
+      module_summary: leaveModuleSummary,
     },
+    leaveModuleSummary,
+    overtimeModuleSummary,
   };
 };

@@ -384,6 +384,8 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
         applied_unpaid_days_from_late: Number(period.attendanceSummary?.late_penalty_rule?.applied_unpaid_days_from_late || 0),
       },
       absent_days: round2(ctx.attendance.unpaid_leave_days),
+      leave_module_summary: period.leaveModuleSummary || null,
+      overtime_module_summary: period.overtimeModuleSummary || null,
     },
     totals: {
       full_month_basic_salary: ctx.basicSalaryFull,
@@ -414,6 +416,8 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
           computed_unpaid_days_from_late: Number(period.attendanceSummary?.late_penalty_rule?.computed_unpaid_days_from_late || 0),
           applied_unpaid_days_from_late: Number(period.attendanceSummary?.late_penalty_rule?.applied_unpaid_days_from_late || 0),
         },
+        leave_module_summary: period.leaveModuleSummary || null,
+        overtime_module_summary: period.overtimeModuleSummary || null,
       },
       // Always use DB status for each record
       records: (period.attendanceRows || []).map(r => ({ ...r, status: r.status })),
@@ -422,8 +426,19 @@ export const calculatePayrollSnapshot = (employee, salaryStructure, period) => {
       summary: {
         paid_leave_days: round2(ctx.attendance.paid_leave_days),
         unpaid_leave_days: round2(ctx.attendance.unpaid_leave_days),
+        module_summary: period.leaveModuleSummary || null,
       },
       records: period.leaveRows,
+    },
+    overtimeSnapshot: {
+      summary: {
+        module_summary: period.overtimeModuleSummary || null,
+      },
+      records: period.overtimeRows || [],
+    },
+    moduleSummary: {
+      leave: period.leaveModuleSummary || null,
+      overtime: period.overtimeModuleSummary || null,
     },
     salaryStructureSnapshot: salaryStructure,
   };
