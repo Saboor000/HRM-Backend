@@ -334,13 +334,13 @@ const getPendingApprovals = async (filters) => {
 const getRecentRequests = async (filters) => {
   let leaveQ = supabase
     .from("leaves")
-    .select("id, employee_id, status, leave_type, submitted_at, employee:employee_id(id, first_name, last_name, department)")
+    .select("id, employee_id, status, leave_type, hr_status, is_paid, paid_at, submitted_at, employee:employee_id(id, first_name, last_name, department)")
     .order("submitted_at", { ascending: false })
     .limit(5);
 
   let overtimeQ = supabase
     .from("overtime_requests")
-    .select("id, employee_id, status, date, requested_at, employee:employee_id(id, first_name, last_name, department)")
+    .select("id, employee_id, status, date, manager_status, hr_status, is_paid, paid_at, requested_at, employee:employee_id(id, first_name, last_name, department)")
     .order("requested_at", { ascending: false })
     .limit(5);
 
@@ -394,7 +394,7 @@ const getAttendanceRowsInRange = async ({ startDate, endDate, filters }) => {
 const getLeaveRowsInRange = async ({ startDate, endDate, filters }) => {
   let q = supabase
     .from("leaves")
-    .select("id, employee_id, status, leave_type, total_days, start_date, end_date, submitted_at, employee:employee_id(id, first_name, last_name, department)")
+    .select("id, employee_id, status, leave_type, hr_status, is_paid, paid_at, total_days, start_date, end_date, submitted_at, employee:employee_id(id, first_name, last_name, department)")
     .gte("start_date", startDate)
     .lte("end_date", endDate)
     .order("submitted_at", { ascending: false });

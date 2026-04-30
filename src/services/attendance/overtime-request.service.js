@@ -473,6 +473,9 @@ export const managerOvertimeActionService = async (id, action, user, reason) => 
     updateData.rejected_at = now;
     updateData.rejected_by = actor?.id || null;
     updateData.rejection_reason = reason || null;
+  } else {
+    // Manager approved - keep status as "pending" for HR review
+    updateData.status = "pending";
   }
 
   const { data, error: updateErr } = await supabase
@@ -513,12 +516,15 @@ export const hrOvertimeActionService = async (id, action, user, reason) => {
   if (isApproved) {
     updateData.approved_at = now;
     updateData.approved_by = actor?.id || null;
+    updateData.is_paid = true;
+    updateData.paid_at = now;
   }
 
   if (isRejected) {
     updateData.rejected_at = now;
     updateData.rejected_by = actor?.id || null;
     updateData.rejection_reason = reason || null;
+    updateData.is_paid = false;
   }
 
   const { data, error: updateErr } = await supabase
