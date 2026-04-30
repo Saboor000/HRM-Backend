@@ -74,4 +74,12 @@ export const payrollEmployeeQuerySchema = strictObject({
     year: yearRule,
     status: Joi.string().valid("draft", "processed", "paid"),
 });
+export const payrollListQuerySchema = strictObject({
+    page: Joi.number().integer().min(1).default(1),
+    limit: Joi.number().integer().min(1).max(100).default(10),
+    employee_id: uuidRule.optional(),
+    month: monthRule,
+    year: yearRule,
+    status: Joi.string().valid("draft", "processed", "paid"),
+});
 //# sourceMappingURL=payroll.validator.js.map

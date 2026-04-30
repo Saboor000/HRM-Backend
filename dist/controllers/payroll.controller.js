@@ -1,4 +1,4 @@
-import { approvePayrollService, createSalaryStructureService, generatePayrollService, getSalaryStructureByEmployeeService, getSalaryStructureByIdService, getSalaryStructuresService, getPayrollByEmployeeService, getPayslipService, markPayrollPaidService, regeneratePayrollService, updateSalaryStructureService, } from "../services/payroll.service.js";
+import { approvePayrollService, createSalaryStructureService, generatePayrollService, getAllPayrollsService, getSalaryStructureByEmployeeService, getSalaryStructureByIdService, getSalaryStructuresService, getPayrollByEmployeeService, getPayslipService, markPayrollPaidService, regeneratePayrollService, updateSalaryStructureService, } from "../services/payroll.service.js";
 import { generatePayslipPdf } from "../utils/payslip.js";
 import { supabase } from "../config/supabase.js";
 const handleError = (res, err) => res.status(err.status || 500).json({
@@ -232,6 +232,20 @@ export const getPayrollByEmployee = async (req, res) => {
         return res.status(200).json({
             success: true,
             message: "Payroll retrieved successfully",
+            ...compactData,
+        });
+    }
+    catch (err) {
+        return handleError(res, err);
+    }
+};
+export const getAllPayrolls = async (req, res) => {
+    try {
+        const data = await getAllPayrollsService(req.validatedQuery || req.query);
+        const compactData = getCompactPayrollPayload(data);
+        return res.status(200).json({
+            success: true,
+            message: "Payrolls retrieved successfully",
             ...compactData,
         });
     }
