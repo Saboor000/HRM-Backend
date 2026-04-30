@@ -2,6 +2,7 @@ import {
   approvePayrollService,
   createSalaryStructureService,
   generatePayrollService,
+  getAllPayrollsService,
   getSalaryStructureByEmployeeService,
   getSalaryStructureByIdService,
   getSalaryStructuresService,
@@ -267,6 +268,21 @@ export const getPayrollByEmployee = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Payroll retrieved successfully",
+      ...compactData,
+    });
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
+export const getAllPayrolls = async (req, res) => {
+  try {
+    const data = await getAllPayrollsService(req.validatedQuery || req.query);
+    const compactData = getCompactPayrollPayload(data);
+
+    return res.status(200).json({
+      success: true,
+      message: "Payrolls retrieved successfully",
       ...compactData,
     });
   } catch (err) {
