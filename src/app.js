@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 
@@ -12,10 +12,8 @@ import payrollRouter from "./routes/payroll.routes.js";
 import policyRouter from "./routes/policy.routes.js";
 import dashboardRouter from "./routes/dashboard.routes.js";
 
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 5000;
 
 const allowedOrigins = new Set([
   "http://localhost:3001",
@@ -57,22 +55,18 @@ app.use("/api", dashboardRouter);
 app.use(notFound);
 app.use(errorHandler);
 
-const startServer = async () => {
-  try {
-    const { error } = await supabase.from("employees").select("id").limit(1);
+try {
+  const { error } = await supabase.from("employees").select("id").limit(1);
 
-    if (error) {
-      console.warn(`Supabase connection check warning: ${error.message}`);
-    } else {
-      console.log("Supabase connection established");
-    }
-  } catch (error) {
-    console.error(`Supabase connection failed: ${error.message}`);
+  if (error) {
+    console.warn(`Supabase connection check warning: ${error.message}`);
+  } else {
+    console.log("Supabase connection established");
   }
+} catch (error) {
+  console.error(`Supabase connection failed: ${error.message}`);
+}
 
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-};
-
-startServer();
+app.listen(PORT, () => {
+  console.log("Server running on port", PORT);
+});

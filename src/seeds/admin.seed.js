@@ -1,7 +1,5 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import { supabase } from "../config/supabase.js";
-
-dotenv.config();
 
 const buildAdminEmployeeId = (authId) => {
   return `ADMIN-${authId.slice(0, 8).toUpperCase()}`;
