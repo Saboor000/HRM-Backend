@@ -1,12 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 
-const { SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_ANON_KEY } = process.env;
+const {
+  SUPABASE_URL,
+  SUPABASE_SERVICE_KEY,
+  SUPABASE_ANON_KEY,
+} = process.env;
 
+// Fail fast at startup (correct approach for production)
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !SUPABASE_ANON_KEY) {
   throw new Error("Missing Supabase environment variables");
 }
 
-const commonAuthOptions = {
+const options = {
   auth: {
     persistSession: false,
     autoRefreshToken: false,
@@ -14,8 +19,16 @@ const commonAuthOptions = {
   },
 };
 
-// Service-role client: use for admin/database/storage operations on backend.
-export const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, commonAuthOptions);
+// Service role client (admin access)
+export const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_KEY,
+  options
+);
 
-// Anon client: use only for sign-in and user-facing auth flows.
-export const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, commonAuthOptions);
+// Anonymous client (auth only)
+export const supabaseAuth = createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  options
+);
