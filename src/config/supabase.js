@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config(); // ← must run before reading process.env
 
 const { SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_ANON_KEY } = process.env;
 
@@ -21,4 +21,4 @@ const commonAuthOptions = {
 export const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, commonAuthOptions);
 
 // Anon client: use only for sign-in and user-facing auth flows.
-// export const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, commonAuthOptions);
+export const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, commonAuthOptions);

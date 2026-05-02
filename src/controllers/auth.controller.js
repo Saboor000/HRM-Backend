@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { supabase } from "../config/supabase.js";
+import { supabase, supabaseAuth } from "../config/supabase.js";
 
 const getRole = (user) => {
   const userRole = user?.app_metadata?.role || user?.user_metadata?.role || "employee";
@@ -91,7 +91,7 @@ export const signin = async (req, res, next) => {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
       email,
       password,
     });
