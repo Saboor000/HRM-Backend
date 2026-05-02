@@ -15,7 +15,7 @@ import dashboardRouter from "./routes/dashboard.routes.js";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 3000;
 
 const allowedOrigins = new Set([
   "http://localhost:3000",
