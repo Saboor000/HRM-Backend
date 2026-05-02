@@ -1,19 +1,17 @@
 {
   "name": "hrm-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "HRM Backend API (JavaScript only)",
   "main": "src/app.js",
+  "type": "module",
   "scripts": {
     "dev": "nodemon src/app.js",
-    "build": "tsc",
-    "start": "node dist/app.js",
-    "seed:admin": "node src/seeds/admin.seed.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/app.js",
+    "prod": "pm2 start src/app.js --name hrm-backend",
+    "stop": "pm2 stop hrm-backend",
+    "restart": "pm2 restart hrm-backend",
+    "delete": "pm2 delete hrm-backend"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.103.0",
     "cors": "^2.8.6",
@@ -26,7 +24,6 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
     "nodemon": "^3.1.14"
   }
 }
