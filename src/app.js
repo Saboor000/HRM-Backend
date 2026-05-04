@@ -1,8 +1,10 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import express from "express";
 import cors from "cors";
 
 import authRouter from "./routes/auth.routes.js";
+import { notFound, errorHandler } from "./middleware/error.middleware.js";
+import { supabase } from "./config/supabase.js";
 import employeeRouter from "./routes/employee.routes.js";
 import leaveRouter from "./routes/leave.routes.js";
 import attendanceRouter from "./routes/attendance.routes.js";
@@ -10,8 +12,7 @@ import payrollRouter from "./routes/payroll.routes.js";
 import policyRouter from "./routes/policy.routes.js";
 import dashboardRouter from "./routes/dashboard.routes.js";
 
-import { notFound, errorHandler } from "./middleware/error.middleware.js";
-import { supabase } from "./config/supabase.js";
+dotenv.config();
 
 const app = express();
 
@@ -52,9 +53,6 @@ app.use(
 // IMPORTANT: handle preflight explicitly
 app.options("*", cors());
 
-/* =========================
-   HEALTH CHECK ROUTE
-========================= */
 app.get("/", (req, res) => {
   res.status(200).json({
     message: "HRM backend is running",
@@ -62,9 +60,6 @@ app.get("/", (req, res) => {
   });
 });
 
-/* =========================
-   ROUTES
-========================= */
 app.use("/api/auth", authRouter);
 app.use("/api", employeeRouter);
 app.use("/api", leaveRouter);
@@ -72,10 +67,6 @@ app.use("/api", attendanceRouter);
 app.use("/api", payrollRouter);
 app.use("/api", policyRouter);
 app.use("/api", dashboardRouter);
-
-/* =========================
-   ERROR HANDLING
-========================= */
 app.use(notFound);
 app.use(errorHandler);
 

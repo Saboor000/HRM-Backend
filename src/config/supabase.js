@@ -1,20 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
 
-const getSupabaseConfig = () => {
-  const {
-    SUPABASE_URL,
-    SUPABASE_SERVICE_KEY,
-    SUPABASE_ANON_KEY,
-  } = process.env;
+dotenv.config(); // ← must run before reading process.env
 
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !SUPABASE_ANON_KEY) {
-    throw new Error("Missing Supabase environment variables");
-  }
+const { SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_ANON_KEY } = process.env;
 
-  return { SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_ANON_KEY };
-};
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !SUPABASE_ANON_KEY) {
+  throw new Error("Missing Supabase environment variables");
+}
 
-const options = {
+const commonAuthOptions = {
   auth: {
     persistSession: false,
     autoRefreshToken: false,
@@ -39,8 +34,8 @@ const createLazyClient = (clientType) => {
   });
 };
 
-// Service role client (admin access)
-export const supabase = createLazyClient("service");
+// Service-role client: use for admin/database/storage operations on backend.
+export const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, commonAuthOptions);
 
-// Anonymous client (auth only)
-export const supabaseAuth = createLazyClient("anon");
+// Anon client: use only for sign-in and user-facing auth flows.
+export const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, commonAuthOptions);
