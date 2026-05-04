@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "nodemon src/app.js",
     "start": "node src/app.js",
-    "prod": "pm2 start src/app.js --name hrm-backend",
+    "prod": "pm2 start ecosystem.config.cjs --env production",
     "stop": "pm2 stop hrm-backend",
     "restart": "pm2 restart hrm-backend",
     "delete": "pm2 delete hrm-backend"

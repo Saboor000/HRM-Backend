@@ -15,34 +15,42 @@ import { supabase } from "./config/supabase.js";
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 4000;
 
 /* =========================
    CORS CONFIG (PRODUCTION SAFE)
 ========================= */
 const allowedOrigins = [
   "http://localhost:3001",
-  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
   process.env.FRONTEND_URL,
-].filter(Boolean);
+];
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow Postman / server-to-server requests
+    origin: function (origin, callback) {
+      // allow mobile apps, postman, server-to-server
       if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
+      const isAllowed = allowedOrigins.some((o) => {
+        if (!o) return false;
+        return origin.startsWith(o);
+      });
+
+      if (isAllowed) {
         return callback(null, true);
       }
 
-      return callback(null, false); // safer than throwing error
+      console.log("Blocked CORS origin:", origin);
+      return callback(null, false);
     },
     credentials: true,
-  })
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  }),
 );
 
-app.use(express.json());
+// IMPORTANT: handle preflight explicitly
+app.options("*", cors());
 
 /* =========================
    HEALTH CHECK ROUTE
@@ -72,31 +80,8 @@ app.use(notFound);
 app.use(errorHandler);
 
 /* =========================
-   NON-BLOCKING SUPABASE CHECK
-========================= */
-const checkSupabaseConnection = async () => {
-  try {
-    const { error } = await supabase
-      .from("employees")
-      .select("id")
-      .limit(1);
-
-    if (error) {
-      console.warn("Supabase connection warning:", error.message);
-    } else {
-      console.log("Supabase connection established");
-    }
-  } catch (err) {
-    console.error("Supabase connection failed:", err.message);
-  }
-};
-
-/* =========================
    START SERVER (PRODUCTION SAFE)
 ========================= */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-
-  // NON-BLOCKING (important for PM2 stability)
-  checkSupabaseConnection();
 });
